@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
+fn get_redis_url() -> String {
+    std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TestJob {
     id: String,
@@ -30,10 +34,9 @@ impl Job for TestJob {
 
 #[tokio::test]
 async fn test_redis_queue_push_pop() {
-    // Make sure Redis is running on this URL for tests
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
     let queue =
-        RedisQueue::<TestJob>::new(redis_url, "test_queue").expect("Failed to create Redis queue");
+        RedisQueue::<TestJob>::new(&redis_url, "test_queue").expect("Failed to create Redis queue");
 
     // Create a test job
     let job = TestJob {
@@ -59,15 +62,15 @@ async fn test_redis_queue_push_pop() {
 
 #[tokio::test]
 async fn test_queue_types() {
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
 
     // Test FIFO queue
-    let fifo_queue = RedisQueue::<TestJob>::new(redis_url, "test_fifo_queue")
+    let fifo_queue = RedisQueue::<TestJob>::new(&redis_url, "test_fifo_queue")
         .expect("Failed to create FIFO queue");
 
     // Test LIFO queue
     let lifo_queue =
-        RedisQueue::<TestJob>::with_type(redis_url, "test_lifo_queue", QueueType::LIFO)
+        RedisQueue::<TestJob>::with_type(&redis_url, "test_lifo_queue", QueueType::LIFO)
             .expect("Failed to create LIFO queue");
 
     // Create test jobs
@@ -141,14 +144,15 @@ async fn test_invalid_redis_url() {
 
 #[tokio::test]
 async fn test_empty_queue_name() {
-    let result = RedisQueue::<TestJob>::new("redis://127.0.0.1:6379", "");
+    let redis_url = get_redis_url();
+    let result = RedisQueue::<TestJob>::new(&redis_url, "");
     assert!(matches!(result, Err(QueueWorkerError::InvalidJobData(_))));
 }
 
 #[tokio::test]
 async fn test_concurrent_queue_access() {
-    let redis_url = "redis://127.0.0.1:6379";
-    let queue = RedisQueue::<TestJob>::new(redis_url, "test_concurrent")
+    let redis_url = get_redis_url();
+    let queue = RedisQueue::<TestJob>::new(&redis_url, "test_concurrent")
         .expect("Failed to create Redis queue");
 
     let mut handles = vec![];
@@ -182,12 +186,12 @@ async fn test_concurrent_queue_access() {
 
 #[tokio::test]
 async fn test_queue_persistence() {
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
     let queue_name = "test_persistence";
 
     // Create first queue instance
     let queue1 =
-        RedisQueue::<TestJob>::new(redis_url, queue_name).expect("Failed to create first queue");
+        RedisQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create first queue");
 
     // Push a job
     let job = TestJob {
@@ -198,7 +202,7 @@ async fn test_queue_persistence() {
 
     // Create second queue instance
     let queue2 =
-        RedisQueue::<TestJob>::new(redis_url, queue_name).expect("Failed to create second queue");
+        RedisQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create second queue");
 
     // Pop job from second instance
     let received_job = queue2.pop().await.expect("Failed to pop job");
@@ -208,9 +212,9 @@ async fn test_queue_persistence() {
 
 #[tokio::test]
 async fn test_queue_behavior_under_load() {
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
     let queue =
-        RedisQueue::<TestJob>::new(redis_url, "test_load").expect("Failed to create Redis queue");
+        RedisQueue::<TestJob>::new(&redis_url, "test_load").expect("Failed to create Redis queue");
 
     // Push many jobs rapidly
     for i in 0..1000 {
@@ -232,9 +236,9 @@ async fn test_queue_behavior_under_load() {
 
 #[tokio::test]
 async fn test_queue_empty_behavior() {
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
     let queue =
-        RedisQueue::<TestJob>::new(redis_url, "test_empty").expect("Failed to create Redis queue");
+        RedisQueue::<TestJob>::new(&redis_url, "test_empty").expect("Failed to create Redis queue");
 
     // Test pop on empty queue
     let result = queue.pop().await;
@@ -243,11 +247,11 @@ async fn test_queue_empty_behavior() {
 
 #[tokio::test]
 async fn test_queue_type_switching() {
-    let redis_url = "redis://127.0.0.1:6379";
+    let redis_url = get_redis_url();
     let queue_name = "test_switching";
 
     // Create FIFO queue
-    let fifo_queue = RedisQueue::<TestJob>::with_type(redis_url, queue_name, QueueType::FIFO)
+    let fifo_queue = RedisQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::FIFO)
         .expect("Failed to create FIFO queue");
 
     // Push some jobs
@@ -260,7 +264,7 @@ async fn test_queue_type_switching() {
     }
 
     // Create LIFO queue with same name
-    let lifo_queue = RedisQueue::<TestJob>::with_type(redis_url, queue_name, QueueType::LIFO)
+    let lifo_queue = RedisQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::LIFO)
         .expect("Failed to create LIFO queue");
 
     // Verify order is now LIFO
