@@ -46,7 +46,8 @@ impl Job for EmailJob {
 }
 
 async fn setup_redis_queue(queue_name: &str) -> RedisQueue<EmailJob> {
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     RedisQueue::new(&redis_url, queue_name).expect("Failed to create Redis queue")
 }
 

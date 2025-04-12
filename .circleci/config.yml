@@ -1,6 +1,23 @@
 version: 2.1
 
 jobs:
+  code-quality:
+    docker:
+      - image: cimg/rust:1.86.0
+    steps:
+      - checkout
+      - run:
+          name: Install rustfmt and clippy
+          command: |
+            rustup component add rustfmt
+            rustup component add clippy
+      - run:
+          name: Check formatting
+          command: cargo fmt -- --check
+      - run:
+          name: Run clippy
+          command: cargo clippy -- -D warnings
+
   test:
     docker:
       - image: cimg/base:current
@@ -8,16 +25,12 @@ jobs:
       - checkout
       - setup_remote_docker:
           version: default
-      
-      # Install docker compose
       - run:
           name: Install Docker Compose
           command: |
             curl -L https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64 -o docker-compose
             chmod +x docker-compose
             sudo mv docker-compose /usr/local/bin/
-
-      # Build and run tests using docker-compose
       - run:
           name: Run tests
           command: |
@@ -28,4 +41,7 @@ workflows:
   version: 2
   build_and_test:
     jobs:
-      - test
+      - code-quality
+      - test:
+          requires:
+            - code-quality

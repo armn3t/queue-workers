@@ -8,7 +8,7 @@ pub trait Job: Send + Sync {
     type Error;
 
     async fn execute(&self) -> Result<Self::Output, Self::Error>;
-    
+
     fn should_retry(&self, _error: &Self::Error, _attempt: u32) -> bool {
         true
     }

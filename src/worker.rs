@@ -41,7 +41,8 @@ where
                     let mut result = job.execute().await;
 
                     while let Err(ref e) = result {
-                        if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts) {
+                        if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts)
+                        {
                             break;
                         }
                         attempts = attempts.saturating_add(1);
@@ -166,7 +167,10 @@ mod tests {
         }
 
         let final_attempts = *attempts.lock().await;
-        assert_eq!(final_attempts, 1, "Job should only be attempted once with RetryCondition::Never");
+        assert_eq!(
+            final_attempts, 1,
+            "Job should only be attempted once with RetryCondition::Never"
+        );
     }
 
     #[tokio::test]
@@ -196,7 +200,10 @@ mod tests {
         }
 
         let final_attempts = *attempts.lock().await;
-        assert_eq!(final_attempts, 4, "Job should be attempted 4 times (initial + 3 retries)");
+        assert_eq!(
+            final_attempts, 4,
+            "Job should be attempted 4 times (initial + 3 retries)"
+        );
     }
 
     #[tokio::test]
@@ -256,7 +263,10 @@ mod tests {
         }
 
         let final_attempts = *attempts.lock().await;
-        assert_eq!(final_attempts, 3, "Job should be attempted 3 times (initial + 2 retries)");
+        assert_eq!(
+            final_attempts, 3,
+            "Job should be attempted 3 times (initial + 2 retries)"
+        );
     }
 
     #[tokio::test]
@@ -286,6 +296,9 @@ mod tests {
         }
 
         let final_attempts = *attempts.lock().await;
-        assert_eq!(final_attempts, 3, "Job should be attempted 3 times (initial + 2 retries) despite Always retry condition");
+        assert_eq!(
+            final_attempts, 3,
+            "Job should be attempted 3 times (initial + 2 retries) despite Always retry condition"
+        );
     }
 }
