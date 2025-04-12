@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "A Redis-backed job queue system for Rust applications"
-repository = "https://github.com/yourusername/queue_workers"
+repository = "https://github.com/armn3t/queue-workers"
+documentation = "https://docs.rs/queue_workers"
+readme = "README.md"
+keywords = ["queue", "redis", "async", "jobs", "workers"]
+categories = ["asynchronous", "database", "development-tools"]
+authors = ["armn3t"]
 
 [dependencies]
 async-trait = "0.1.88"
