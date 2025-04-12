@@ -34,6 +34,16 @@ impl<J> RedisQueue<J> {
     }
 }
 
+impl<J> Clone for RedisQueue<J> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            queue_name: self.queue_name.clone(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
 #[async_trait]
 impl<J> Queue for RedisQueue<J>
 where
