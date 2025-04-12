@@ -1,5 +1,5 @@
 use queue_workers::{
-    error::QueueWorkerError, job::Job, queue::{Queue, QueueType}, redis_queue::RedisQueue, worker::{Worker, WorkerConfig}
+    error::QueueWorkerError, job::Job, queue::Queue, redis_queue::RedisQueue, worker::{Worker, WorkerConfig}
 };
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

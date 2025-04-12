@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use redis::{AsyncCommands, Client, aio::MultiplexedConnection};
 use serde::{de::DeserializeOwned, Serialize};
+use std::time::Duration;
 
 use crate::{
     error::QueueWorkerError,
@@ -16,13 +17,25 @@ pub struct RedisQueue<J> {
 }
 
 impl<J> RedisQueue<J> {
-    pub fn new(redis_url: &str, queue_name: &str, ) -> Result<Self, QueueWorkerError> {
+    pub fn new(redis_url: &str, queue_name: &str) -> Result<Self, QueueWorkerError> {
         Self::with_type(redis_url, queue_name, QueueType::default())
     }
     
-    pub fn with_type(redis_url: &str, queue_name: &str, queue_type: QueueType) -> Result<Self, QueueWorkerError> {
+    pub fn with_type(redis_url: &str, queue_name: &str, queue_type: QueueType) 
+        -> Result<Self, QueueWorkerError> 
+    {
+        if redis_url.is_empty() {
+            return Err(QueueWorkerError::ConnectionError(
+                "Redis URL cannot be empty".to_string()));
+        }
+        if queue_name.is_empty() {
+            return Err(QueueWorkerError::InvalidJobData(
+                "Queue name cannot be empty".to_string()));
+        }
+
         let client = Client::open(redis_url)
-        .map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))?;
+            .map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))?;
+
         Ok(Self {
             client,
             queue_name: queue_name.to_string(),
@@ -32,10 +45,15 @@ impl<J> RedisQueue<J> {
     }
 
     async fn get_connection(&self) -> Result<MultiplexedConnection, QueueWorkerError> {
-        self.client
-            .get_multiplexed_async_connection()
-            .await
-            .map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))
+        // Add timeout to prevent hanging indefinitely
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            self.client.get_multiplexed_async_connection()
+        ).await {
+            Ok(conn_result) => conn_result
+                .map_err(|e| QueueWorkerError::ConnectionError(e.to_string())),
+            Err(_) => Err(QueueWorkerError::TimeoutError),
+        }
     }
 }
 
@@ -61,12 +79,11 @@ where
         let mut conn = self.get_connection().await?;
         
         let job_data = serde_json::to_string(&job)
-            .map_err(QueueWorkerError::SerializationError)?;
+            .map_err(|e| QueueWorkerError::SerializationError(e))?;
 
-        // Always push to left side
         conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
-            .map_err(QueueWorkerError::RedisError)?;
+            .map_err(|e| QueueWorkerError::RedisError(e))?;
 
         Ok(())
     }
@@ -74,26 +91,25 @@ where
     async fn pop(&self) -> Result<Self::JobType, QueueWorkerError> {
         let mut conn = self.get_connection().await?;
 
-        // Pop based on queue type
         let job_data: Option<String> = match self.queue_type {
             QueueType::FIFO => {
-                // For FIFO, pop from right side (oldest element)
                 conn.rpop::<&String, Option<String>>(&self.queue_name, None)
                     .await
-                    .map_err(QueueWorkerError::RedisError)?
+                    .map_err(|e| QueueWorkerError::RedisError(e))?
             }
             QueueType::LIFO => {
-                // For LIFO, pop from left side (newest element)
                 conn.lpop::<&String, Option<String>>(&self.queue_name, None)
                     .await
-                    .map_err(QueueWorkerError::RedisError)?
+                    .map_err(|e| QueueWorkerError::RedisError(e))?
             }
         };
 
         let job_data = job_data
-            .ok_or_else(|| QueueWorkerError::JobNotFound("Queue is empty".to_string()))?;
+            .ok_or_else(|| QueueWorkerError::JobNotFound(
+                format!("Queue '{}' is empty", self.queue_name)
+            ))?;
 
         serde_json::from_str(&job_data)
-            .map_err(QueueWorkerError::SerializationError)
+            .map_err(|e| QueueWorkerError::SerializationError(e))
     }
 }

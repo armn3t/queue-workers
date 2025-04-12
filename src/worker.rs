@@ -5,6 +5,7 @@ use crate::{
     queue::Queue,
     error::QueueWorkerError,
 };
+use std::fmt::Display;
 
 pub struct WorkerConfig {
     pub retry_attempts: u32,
@@ -27,7 +28,11 @@ pub struct Worker<Q: Queue> {
     config: WorkerConfig,
 }
 
-impl<Q: Queue> Worker<Q> {
+impl<Q> Worker<Q> 
+where 
+    Q: Queue,
+    <Q::JobType as Job>::Error: Display,
+{
     pub fn new(queue: Q, config: WorkerConfig) -> Self {
         Self { queue, config }
     }
@@ -36,28 +41,25 @@ impl<Q: Queue> Worker<Q> {
         loop {
             match self.queue.pop().await {
                 Ok(job) => {
-                    let mut attempts = 0;
+                    let mut attempts: u32 = 0;
                     let mut result = job.execute().await;
 
                     while result.is_err() && attempts < self.config.retry_attempts {
-                        attempts += 1;
+                        attempts = attempts.saturating_add(1);
                         sleep(self.config.retry_delay).await;
                         result = job.execute().await;
                     }
 
-                    // TODO: do something with that error
-                    if let Err(_e) = result {
-
-                        // Handle final failure
-                        eprintln!("Job failed after {} attempts", attempts + 1);
+                    if let Err(e) = result {
+                        let error_msg = format!("Job failed after {} attempts: {}", 
+                            attempts.saturating_add(1), e);
+                        return Err(QueueWorkerError::WorkerError(error_msg));
                     }
                 }
                 Err(QueueWorkerError::JobNotFound(_)) => {
-                    // Queue is empty, wait before trying again
                     sleep(Duration::from_secs(1)).await;
                 }
                 Err(e) => {
-                    // Handle other errors (connection issues etc.)
                     return Err(e);
                 }
             }
