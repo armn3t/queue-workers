@@ -81,7 +81,7 @@ where
         loop {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let queue = queue.clone();
-            
+
             tokio::spawn(async move {
                 let result = Self::process_job((*queue).clone(), retry_attempts, retry_delay).await;
                 if let Err(e) = result {
@@ -129,7 +129,7 @@ where
                 _ = async {
                     let permit = semaphore.clone().acquire_owned().await.unwrap();
                     let queue = queue.clone();
-                    
+
                     tokio::spawn(async move {
                         let result = Self::process_job((*queue).clone(), retry_attempts, retry_delay).await;
                         if let Err(e) = result {
@@ -157,7 +157,7 @@ mod tests {
     struct TestJob {
         attempts: Arc<Mutex<u32>>,
         should_fail: bool,
-        retry_on_error: bool,  // New field to control retry behavior
+        retry_on_error: bool, // New field to control retry behavior
     }
 
     #[async_trait]
@@ -212,14 +212,12 @@ mod tests {
                 .map(|i| TestJob {
                     attempts: Arc::new(Mutex::new(0)),
                     should_fail: i % 3 == 0,
-                    retry_on_error: i % 2 == 0,  // Only retry even-numbered jobs
+                    retry_on_error: i % 2 == 0, // Only retry even-numbered jobs
                 })
                 .collect::<Vec<_>>(),
         ));
 
-        let queue = TestQueue {
-            jobs: jobs.clone(),
-        };
+        let queue = TestQueue { jobs: jobs.clone() };
 
         let config = ConcurrentWorkerConfig {
             max_concurrent_jobs: 3,
@@ -252,9 +250,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         ));
 
-        let queue = TestQueue {
-            jobs: jobs.clone(),
-        };
+        let queue = TestQueue { jobs: jobs.clone() };
 
         let config = ConcurrentWorkerConfig {
             max_concurrent_jobs: 5,
