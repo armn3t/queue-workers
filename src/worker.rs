@@ -1,11 +1,7 @@
+use crate::{error::QueueWorkerError, job::Job, queue::Queue};
+use std::fmt::Display;
 use std::time::Duration;
 use tokio::time::sleep;
-use crate::{
-    job::Job,
-    queue::Queue,
-    error::QueueWorkerError,
-};
-use std::fmt::Display;
 
 pub struct WorkerConfig {
     pub retry_attempts: u32,
@@ -28,8 +24,8 @@ pub struct Worker<Q: Queue> {
     config: WorkerConfig,
 }
 
-impl<Q> Worker<Q> 
-where 
+impl<Q> Worker<Q>
+where
     Q: Queue,
     <Q::JobType as Job>::Error: Display,
 {
@@ -51,8 +47,11 @@ where
                     }
 
                     if let Err(e) = result {
-                        let error_msg = format!("Job failed after {} attempts: {}", 
-                            attempts.saturating_add(1), e);
+                        let error_msg = format!(
+                            "Job failed after {} attempts: {}",
+                            attempts.saturating_add(1),
+                            e
+                        );
                         return Err(QueueWorkerError::WorkerError(error_msg));
                     }
                 }
@@ -113,7 +112,8 @@ mod tests {
 
         async fn pop(&self) -> Result<Self::JobType, QueueWorkerError> {
             let mut jobs = self.jobs.lock().await;
-            jobs.pop().ok_or_else(|| QueueWorkerError::JobNotFound("Queue empty".to_string()))
+            jobs.pop()
+                .ok_or_else(|| QueueWorkerError::JobNotFound("Queue empty".to_string()))
         }
     }
 

@@ -1,14 +1,14 @@
+pub mod error;
 pub mod job;
 pub mod queue;
-pub mod worker;
-pub mod error;
 pub mod redis_queue;
+pub mod worker;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::job::Job;
     use super::queue::Queue;
+    use super::*;
     use std::time::Duration;
     use tokio::time::sleep;
 
@@ -26,7 +26,7 @@ mod tests {
 
         async fn execute(&self) -> Result<Self::Output, Self::Error> {
             sleep(self.delay).await;
-            
+
             if self.should_fail {
                 Err(format!("Job {} failed", self.id))
             } else {
@@ -102,10 +102,13 @@ mod tests {
         // Test pop
         let pop_result = queue.pop().await;
         assert!(pop_result.is_ok());
-        
+
         // Queue should be empty now
         let empty_pop = queue.pop().await;
         assert!(empty_pop.is_err());
-        assert!(matches!(empty_pop.unwrap_err(), error::QueueWorkerError::JobNotFound(_)));
+        assert!(matches!(
+            empty_pop.unwrap_err(),
+            error::QueueWorkerError::JobNotFound(_)
+        ));
     }
 }

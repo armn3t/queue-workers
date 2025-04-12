@@ -21,7 +21,7 @@ pub enum JobStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobMetadata<T>
 where
-    T: Serialize
+    T: Serialize,
 {
     id: Uuid,
     payload: T,
@@ -31,7 +31,7 @@ where
 
 impl<T> JobMetadata<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
     pub fn new(payload: T) -> Self {
         Self {
@@ -78,9 +78,9 @@ mod tests {
 
     #[test]
     fn test_new_job_metadata() {
-
-
-        let metadata = JobMetadata::new(TestPayload { data: "test".to_string() });
+        let metadata = JobMetadata::new(TestPayload {
+            data: "test".to_string(),
+        });
 
         // Check that a UUID was generated
         assert!(!metadata.id().is_nil());
@@ -100,7 +100,9 @@ mod tests {
 
     #[test]
     fn test_update_status() {
-        let mut metadata = JobMetadata::new(TestPayload { data: "test".to_string() });
+        let mut metadata = JobMetadata::new(TestPayload {
+            data: "test".to_string(),
+        });
 
         // Test transition to Running
         metadata.update_status(JobStatus::Running);
@@ -126,7 +128,9 @@ mod tests {
 
     #[test]
     fn test_clone() {
-        let original = JobMetadata::new(TestPayload { data: "test".to_string() });
+        let original = JobMetadata::new(TestPayload {
+            data: "test".to_string(),
+        });
         let cloned = original.clone();
 
         assert_eq!(original.id(), cloned.id());
@@ -140,7 +144,9 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let metadata = JobMetadata::new(TestPayload { data: "test".to_string() });
+        let metadata = JobMetadata::new(TestPayload {
+            data: "test".to_string(),
+        });
 
         // Test serialization
         let serialized = serde_json::to_string(&metadata).expect("Failed to serialize");
