@@ -3,12 +3,12 @@ version: 2.1
 jobs:
   test:
     docker:
-      - image: cimg/rust:1.85.1
+      - image: cimg/base:current
     steps:
       - checkout
       - setup_remote_docker:
           version: default
-
+      
       # Install docker compose
       - run:
           name: Install Docker Compose
@@ -17,36 +17,12 @@ jobs:
             chmod +x docker-compose
             sudo mv docker-compose /usr/local/bin/
 
-      # Start Redis using docker-compose
-      - run:
-          name: Start Redis
-          command: docker-compose up -d redis
-
-      # Wait for Redis to be ready
-      - run:
-          name: Wait for Redis
-          command: |
-            timeout 20s bash -c '
-            until docker-compose exec -T redis redis-cli ping; do
-              echo "Waiting for Redis..."
-              sleep 1
-            done'
-
-      # Cache dependencies
-      - restore_cache:
-          key: cargo-cache-{{ checksum "Cargo.lock" }}
-
-      # Build and run tests
+      # Build and run tests using docker-compose
       - run:
           name: Run tests
-          command: cargo test -- --test-threads=1
-
-      # Save cache
-      - save_cache:
-          key: cargo-cache-{{ checksum "Cargo.lock" }}
-          paths:
-            - ~/.cargo
-            - target
+          command: |
+            docker-compose build test
+            docker-compose run --rm test
 
 workflows:
   version: 2
