@@ -135,6 +135,27 @@ let queue = RedisQueue::<MyJob>::new(
 ).expect("Failed to create queue");
 ```
 
+### Queue Types
+
+The queue supports both FIFO (First In, First Out) and LIFO (Last In, First Out) behaviors:
+
+```rust
+use queue_workers::{redis_queue::RedisQueue, queue::QueueType};
+
+// Create a FIFO queue (default behavior)
+let fifo_queue = RedisQueue::<MyJob>::new(redis_url, "fifo_queue")?;
+
+// Create a LIFO queue
+let lifo_queue = RedisQueue::<MyJob>::with_type(
+    redis_url,
+    "lifo_queue",
+    QueueType::LIFO
+)?;
+```
+
+- FIFO: Jobs are processed in the order they were added (oldest first)
+- LIFO: Jobs are processed in reverse order (newest first)
+
 ## Running Multiple Workers
 
 You can run multiple workers processing the same queue:

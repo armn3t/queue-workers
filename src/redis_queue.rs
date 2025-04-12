@@ -5,23 +5,28 @@ use serde::{de::DeserializeOwned, Serialize};
 use crate::{
     error::QueueWorkerError,
     job::Job,
-    queue::Queue,
+    queue::{Queue, QueueType},
 };
 
 pub struct RedisQueue<J> {
     client: Client,
     queue_name: String,
+    queue_type: QueueType,
     _phantom: std::marker::PhantomData<J>,
 }
 
 impl<J> RedisQueue<J> {
-    pub fn new(redis_url: &str, queue_name: &str) -> Result<Self, QueueWorkerError> {
+    pub fn new(redis_url: &str, queue_name: &str, ) -> Result<Self, QueueWorkerError> {
+        Self::with_type(redis_url, queue_name, QueueType::default())
+    }
+    
+    pub fn with_type(redis_url: &str, queue_name: &str, queue_type: QueueType) -> Result<Self, QueueWorkerError> {
         let client = Client::open(redis_url)
-            .map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))?;
-
+        .map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))?;
         Ok(Self {
             client,
             queue_name: queue_name.to_string(),
+            queue_type,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -39,6 +44,7 @@ impl<J> Clone for RedisQueue<J> {
         Self {
             client: self.client.clone(),
             queue_name: self.queue_name.clone(),
+            queue_type: self.queue_type,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -54,12 +60,11 @@ where
     async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
         let mut conn = self.get_connection().await?;
         
-        // Serialize the job
         let job_data = serde_json::to_string(&job)
             .map_err(QueueWorkerError::SerializationError)?;
 
-        // Push to Redis list
-        conn.rpush::<&String, String, ()>(&self.queue_name, job_data)
+        // Always push to left side
+        conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
             .map_err(QueueWorkerError::RedisError)?;
 
@@ -69,14 +74,25 @@ where
     async fn pop(&self) -> Result<Self::JobType, QueueWorkerError> {
         let mut conn = self.get_connection().await?;
 
-        // Pop from Redis list (left side)
-        let job_data: String = conn
-            .lpop::<&String, Option<String>>(&self.queue_name, None)
-            .await
-            .map_err(QueueWorkerError::RedisError)?
+        // Pop based on queue type
+        let job_data: Option<String> = match self.queue_type {
+            QueueType::FIFO => {
+                // For FIFO, pop from right side (oldest element)
+                conn.rpop::<&String, Option<String>>(&self.queue_name, None)
+                    .await
+                    .map_err(QueueWorkerError::RedisError)?
+            }
+            QueueType::LIFO => {
+                // For LIFO, pop from left side (newest element)
+                conn.lpop::<&String, Option<String>>(&self.queue_name, None)
+                    .await
+                    .map_err(QueueWorkerError::RedisError)?
+            }
+        };
+
+        let job_data = job_data
             .ok_or_else(|| QueueWorkerError::JobNotFound("Queue is empty".to_string()))?;
 
-        // Deserialize the job
         serde_json::from_str(&job_data)
             .map_err(QueueWorkerError::SerializationError)
     }
