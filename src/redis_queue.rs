@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use redis::{AsyncCommands, Client, aio::MultiplexedConnection};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
 
 use crate::{
@@ -20,17 +20,21 @@ impl<J> RedisQueue<J> {
     pub fn new(redis_url: &str, queue_name: &str) -> Result<Self, QueueWorkerError> {
         Self::with_type(redis_url, queue_name, QueueType::default())
     }
-    
-    pub fn with_type(redis_url: &str, queue_name: &str, queue_type: QueueType) 
-        -> Result<Self, QueueWorkerError> 
-    {
+
+    pub fn with_type(
+        redis_url: &str,
+        queue_name: &str,
+        queue_type: QueueType,
+    ) -> Result<Self, QueueWorkerError> {
         if redis_url.is_empty() {
             return Err(QueueWorkerError::ConnectionError(
-                "Redis URL cannot be empty".to_string()));
+                "Redis URL cannot be empty".to_string(),
+            ));
         }
         if queue_name.is_empty() {
             return Err(QueueWorkerError::InvalidJobData(
-                "Queue name cannot be empty".to_string()));
+                "Queue name cannot be empty".to_string(),
+            ));
         }
 
         let client = Client::open(redis_url)
@@ -48,10 +52,13 @@ impl<J> RedisQueue<J> {
         // Add timeout to prevent hanging indefinitely
         match tokio::time::timeout(
             Duration::from_secs(5),
-            self.client.get_multiplexed_async_connection()
-        ).await {
-            Ok(conn_result) => conn_result
-                .map_err(|e| QueueWorkerError::ConnectionError(e.to_string())),
+            self.client.get_multiplexed_async_connection(),
+        )
+        .await
+        {
+            Ok(conn_result) => {
+                conn_result.map_err(|e| QueueWorkerError::ConnectionError(e.to_string()))
+            }
             Err(_) => Err(QueueWorkerError::TimeoutError),
         }
     }
@@ -77,13 +84,12 @@ where
 
     async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
         let mut conn = self.get_connection().await?;
-        
-        let job_data = serde_json::to_string(&job)
-            .map_err(|e| QueueWorkerError::SerializationError(e))?;
+
+        let job_data = serde_json::to_string(&job).map_err(QueueWorkerError::SerializationError)?;
 
         conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
-            .map_err(|e| QueueWorkerError::RedisError(e))?;
+            .map_err(QueueWorkerError::RedisError)?;
 
         Ok(())
     }
@@ -92,24 +98,20 @@ where
         let mut conn = self.get_connection().await?;
 
         let job_data: Option<String> = match self.queue_type {
-            QueueType::FIFO => {
-                conn.rpop::<&String, Option<String>>(&self.queue_name, None)
-                    .await
-                    .map_err(|e| QueueWorkerError::RedisError(e))?
-            }
-            QueueType::LIFO => {
-                conn.lpop::<&String, Option<String>>(&self.queue_name, None)
-                    .await
-                    .map_err(|e| QueueWorkerError::RedisError(e))?
-            }
+            QueueType::FIFO => conn
+                .rpop::<&String, Option<String>>(&self.queue_name, None)
+                .await
+                .map_err(QueueWorkerError::RedisError)?,
+            QueueType::LIFO => conn
+                .lpop::<&String, Option<String>>(&self.queue_name, None)
+                .await
+                .map_err(QueueWorkerError::RedisError)?,
         };
 
-        let job_data = job_data
-            .ok_or_else(|| QueueWorkerError::JobNotFound(
-                format!("Queue '{}' is empty", self.queue_name)
-            ))?;
+        let job_data = job_data.ok_or_else(|| {
+            QueueWorkerError::JobNotFound(format!("Queue '{}' is empty", self.queue_name))
+        })?;
 
-        serde_json::from_str(&job_data)
-            .map_err(|e| QueueWorkerError::SerializationError(e))
+        serde_json::from_str(&job_data).map_err(QueueWorkerError::SerializationError)
     }
 }
