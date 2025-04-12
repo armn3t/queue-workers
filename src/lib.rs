@@ -2,6 +2,7 @@ pub mod job;
 pub mod queue;
 pub mod worker;
 pub mod error;
+pub mod redis_queue;
 
 #[cfg(test)]
 mod tests {

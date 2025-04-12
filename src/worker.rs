@@ -1,5 +1,3 @@
-
-use std::future;
 use async_trait::async_trait;
 
 use crate::error::QueueWorkerError;

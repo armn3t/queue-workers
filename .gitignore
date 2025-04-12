@@ -1,1 +1,4 @@
 /target
+*.rdb
+dump.rdb
+appendonly.aof
