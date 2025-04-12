@@ -1,13 +1,14 @@
 
-use std::future;
+use async_trait::async_trait;
 
 use crate::{job::Job, error};
 
+#[async_trait]
 pub trait Queue: Send + Sync {
     type JobType: Job;
 
 
-    fn push(&self, job: Self::JobType) -> impl future::Future<Output = Result<(), error::QueueWorkerError>> + Send;
+    async fn push(&self, job: Self::JobType) -> Result<(), error::QueueWorkerError>;
 
-    fn pop(&self) -> impl future::Future<Output = Result<Self::JobType, error::QueueWorkerError>> + Send;
+    async fn pop(&self) -> Result<Self::JobType, error::QueueWorkerError>;
 }

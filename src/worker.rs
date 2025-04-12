@@ -1,11 +1,13 @@
 
 use std::future;
+use async_trait::async_trait;
 
 use crate::error::QueueWorkerError;
 
+#[async_trait]
 pub trait Worker {
-    fn start(&self) -> impl future::Future<Output = Result<(), QueueWorkerError>> + Send;
-    fn stop(&self) -> impl future::Future<Output = Result<(), QueueWorkerError>> + Send;
+    async fn start(&self) -> Result<(), QueueWorkerError>;
+    async fn stop(&self) -> Result<(), QueueWorkerError>;
 
     fn status(&self) -> String;
 
