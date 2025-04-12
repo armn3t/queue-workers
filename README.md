@@ -184,6 +184,56 @@ The library provides a custom error type `QueueWorkerError` that covers various 
 - Worker errors
 - Connection timeouts
 
+## Worker Types
+
+The library provides two types of workers:
+
+### Sequential Worker
+
+Processes jobs one at a time, with retry support:
+
+```rust
+use queue_workers::{
+    redis_queue::RedisQueue,
+    worker::{Worker, WorkerConfig}
+};
+
+let config = WorkerConfig {
+    retry_attempts: 3,
+    retry_delay: Duration::from_secs(5),
+    shutdown_timeout: Duration::from_secs(30),
+};
+
+let worker = Worker::new(queue.clone(), config);
+worker.start().await?;
+```
+
+### Concurrent Worker
+
+Processes multiple jobs in parallel:
+
+```rust
+use queue_workers::{
+    redis_queue::RedisQueue,
+    concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig}
+};
+
+let config = ConcurrentWorkerConfig {
+    max_concurrent_jobs: 5,  // Process 5 jobs simultaneously
+    retry_attempts: 3,
+    retry_delay: Duration::from_secs(5),
+    shutdown_timeout: Duration::from_secs(30),
+};
+
+let worker = ConcurrentWorker::new(queue.clone(), config);
+worker.start().await?;
+
+// Or with shutdown support:
+let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+let worker = ConcurrentWorker::new(queue.clone(), config);
+worker.start_with_shutdown(shutdown_rx).await?;
+```
+
 ## Contributing
 
 1. Fork the repository
