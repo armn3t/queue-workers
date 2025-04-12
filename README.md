@@ -13,7 +13,7 @@ A Redis-backed job queue system for Rust applications with support for retries a
 
 ## Prerequisites
 
-- Rust 1.75.0 or later
+- Rust 1.86.0 or later
 - Redis server (local or remote)
 - Docker and Docker Compose (for development)
 
@@ -100,15 +100,46 @@ git clone https://github.com/yourusername/queue_workers.git
 cd queue_workers
 ```
 
-2. Start Redis using Docker Compose:
+2. Install development dependencies:
+```bash
+rustup component add rustfmt
+rustup component add clippy
+```
+
+3. Set up git hooks:
+```bash
+chmod +x scripts/setup-git-hooks.sh
+./scripts/setup-git-hooks.sh
+```
+
+4. Start Redis using Docker Compose:
 ```bash
 docker-compose up -d redis
 ```
 
-3. Run the tests:
+5. Run the tests:
 ```bash
 cargo test
 ```
+
+### Code Quality
+
+This project enforces code quality through:
+- Formatting using `rustfmt`
+- Linting using `clippy`
+
+To manually run the checks:
+```bash
+# Check formatting
+cargo fmt -- --check
+
+# Run clippy
+cargo clippy -- -D warnings
+```
+
+These checks run automatically:
+- As a pre-commit hook when committing changes
+- In CI/CD pipeline for all pull requests
 
 ## Configuration
 
