@@ -48,7 +48,10 @@ where
                 let mut attempts: u32 = 0;
                 let mut result = job.execute().await;
 
-                while result.is_err() && attempts < retry_attempts {
+                while let Err(ref e) = result {
+                    if attempts >= retry_attempts || !job.should_retry(e, attempts) {
+                        break;
+                    }
                     attempts = attempts.saturating_add(1);
                     sleep(retry_delay).await;
                     result = job.execute().await;
@@ -154,6 +157,7 @@ mod tests {
     struct TestJob {
         attempts: Arc<Mutex<u32>>,
         should_fail: bool,
+        retry_on_error: bool,  // New field to control retry behavior
     }
 
     #[async_trait]
@@ -170,6 +174,11 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
+            // Only retry if retry_on_error is true and we haven't exceeded 2 attempts
+            self.retry_on_error && attempt < 2
         }
     }
 
@@ -202,7 +211,8 @@ mod tests {
             (0..total_jobs)
                 .map(|i| TestJob {
                     attempts: Arc::new(Mutex::new(0)),
-                    should_fail: i % 3 == 0, // Make some jobs fail
+                    should_fail: i % 3 == 0,
+                    retry_on_error: i % 2 == 0,  // Only retry even-numbered jobs
                 })
                 .collect::<Vec<_>>(),
         ));
@@ -237,6 +247,7 @@ mod tests {
                 .map(|_| TestJob {
                     attempts: Arc::new(Mutex::new(0)),
                     should_fail: false,
+                    retry_on_error: true,
                 })
                 .collect::<Vec<_>>(),
         ));
