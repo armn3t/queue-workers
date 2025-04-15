@@ -37,11 +37,58 @@ jobs:
             docker-compose build test
             docker-compose run --rm test
 
+  publish:
+    docker:
+      - image: cimg/rust:1.86.0
+    steps:
+      - checkout
+      - run:
+          name: Install cargo-audit
+          command: cargo install cargo-audit
+      - run:
+          name: Check dependencies for security vulnerabilities
+          command: cargo audit
+      - run:
+          name: Verify package version
+          command: |
+            PUBLISHED_VERSION=$(cargo search queue_workers --limit 1 | grep -oP 'queue_workers = "\K[^"]+')
+            CURRENT_VERSION=$(grep -oP 'version = "\K[^"]+' Cargo.toml)
+            if [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
+              echo "Version ${CURRENT_VERSION} is already published"
+              exit 1
+            fi
+      - run:
+          name: Build documentation
+          command: cargo doc --no-deps
+      - run:
+          name: Verify package
+          command: |
+            cargo package
+            cargo package --list
+      - run:
+          name: Publish to crates.io
+          command: |
+            echo "Publishing version $(grep -oP 'version = "\K[^"]+' Cargo.toml)"
+            cargo publish --token ${CRATES_IO_TOKEN}
+      - run:
+          name: Create git tag
+          command: |
+            VERSION=v$(grep -oP 'version = "\K[^"]+' Cargo.toml)
+            git tag -a ${VERSION} -m "Release ${VERSION}"
+            git push origin ${VERSION}
+
 workflows:
   version: 2
-  build_and_test:
+  build_test_publish:
     jobs:
       - code-quality
       - test:
           requires:
             - code-quality
+      - publish:
+          context: crates-io-publish-context
+          requires:
+            - test
+          # filters:
+          #   branches:
+          #     only: master
