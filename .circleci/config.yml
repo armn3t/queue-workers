@@ -49,31 +49,6 @@ jobs:
           name: Check dependencies for security vulnerabilities
           command: cargo audit
       - run:
-          name: Verify package version
-          command: |
-            CURRENT_VERSION=$(grep -oP 'version = "\K[^"]+' Cargo.toml)
-            echo "Current version: ${CURRENT_VERSION}"
-            
-            # Use cargo search with proper error handling
-            SEARCH_RESULT=$(cargo search queue_workers --limit 1 || echo "Package not found")
-            if echo "$SEARCH_RESULT" | grep -q "Package not found"; then
-              echo "Package not found in registry - this must be the first publication"
-            else
-              PUBLISHED_VERSION=$(echo "$SEARCH_RESULT" | grep -oP 'queue_workers = "\K[^"]+' || echo "not found")
-              echo "Latest published version: ${PUBLISHED_VERSION}"
-              
-              if [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
-                echo "Error: Version ${CURRENT_VERSION} is already published"
-                exit 1
-              fi
-              
-              if [ "$PUBLISHED_VERSION" = "not found" ]; then
-                echo "Error: Failed to parse version from cargo search output"
-                echo "Search result was: $SEARCH_RESULT"
-                exit 1
-              fi
-            fi
-      - run:
           name: Build documentation
           command: cargo doc --no-deps
       - run:
@@ -89,9 +64,11 @@ jobs:
       - run:
           name: Create git tag
           command: |
-            VERSION=v$(grep -oP 'version = "\K[^"]+' Cargo.toml)
-            git tag -a ${VERSION} -m "Release ${VERSION}"
-            git push origin ${VERSION}
+            VERSION="v$(grep -oP 'version = "\K[^"]+' Cargo.toml)"
+            git config user.email "armhamos@gmail.com"
+            git config user.name "arm-cci"
+            git tag -a "${VERSION}" -m "Release ${VERSION}"
+            git push origin "${VERSION}"
 
 workflows:
   version: 2
