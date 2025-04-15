@@ -89,11 +89,11 @@ jobs:
             cargo package --list
             cargo package
       - run:
-          name: Package verification and publish
+          name: Publish package
           command: |
             VERSION="v$(grep -oP '^version = "\K[^"]+' Cargo.toml)"
             echo "Publishing version ${VERSION}"
-            cargo publish --token ${CRATES_IO_TOKEN} --dry-run
+            cargo publish --token ${CRATES_IO_TOKEN}
             
       - run:
           name: Create git tag
