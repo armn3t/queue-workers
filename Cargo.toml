@@ -1,6 +1,6 @@
 [package]
 name = "queue_workers"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 description = "A Redis-backed job queue system for Rust applications"
