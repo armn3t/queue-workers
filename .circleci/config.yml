@@ -1,22 +1,35 @@
 version: 2.1
 
+orbs:
+  rust: circleci/rust@1
+
 jobs:
   code-quality:
     docker:
       - image: cimg/rust:1.86.0
     steps:
       - checkout
+      - rust/install:
+          version: "1.86.0"
       - run:
-          name: Install rustfmt and clippy
+          name: Install Rust components
           command: |
             rustup component add rustfmt
             rustup component add clippy
+      - restore_cache:
+          keys:
+            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
           name: Check formatting
           command: cargo fmt -- --check
       - run:
           name: Run clippy
           command: cargo clippy -- -D warnings
+      - save_cache:
+          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo
+            - target
 
   test:
     docker:
