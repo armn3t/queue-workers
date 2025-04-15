@@ -1,5 +1,7 @@
 # Queue Workers
 
+> ⚠️ **Work in Progress**: This crate is under active development and is not yet ready for production use. The API is unstable and may undergo significant changes. Feel free to experiment and provide feedback, but please do not use in production environments.
+
 A Redis-backed job queue system for Rust applications with support for retries and concurrent workers.
 
 ## Features
