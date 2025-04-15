@@ -59,12 +59,12 @@ jobs:
       - run:
           name: Publish to crates.io
           command: |
-            echo "Publishing version $(grep -oP 'version = "\K[^"]+' Cargo.toml)"
-            cargo publish --token ${CRATES_IO_TOKEN} --dry-run
+            echo "Publishing version $(grep -oP '^version = "\K[^"]+' Cargo.toml)"
+            cargo publish --token ${CRATES_IO_TOKEN}
       - run:
           name: Create git tag
           command: |
-            VERSION="v$(grep -oP 'version = "\K[^"]+' Cargo.toml)"
+            VERSION="v$(grep -oP '^version = "\K[^"]+' Cargo.toml)"
             git config user.email "armhamos@gmail.com"
             git config user.name "arm-cci"
             git tag -a "${VERSION}" -m "Release ${VERSION}"
