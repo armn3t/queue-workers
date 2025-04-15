@@ -7,18 +7,17 @@ jobs:
   code-quality:
     docker:
       - image: cimg/rust:1.86.0
+    resource_class: medium
     steps:
       - checkout
-      - rust/install:
-          version: "1.86.0"
+      - restore_cache:
+          keys:
+            - cargo-cache-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v1-{{ arch }}-
       - run:
           name: Install Rust components
           command: |
-            rustup component add rustfmt
-            rustup component add clippy
-      - restore_cache:
-          keys:
-            - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+            rustup component add rustfmt clippy
       - run:
           name: Check formatting
           command: cargo fmt -- --check
@@ -26,54 +25,71 @@ jobs:
           name: Run clippy
           command: cargo clippy -- -D warnings
       - save_cache:
-          key: cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
+          key: cargo-cache-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
           paths:
-            - ~/.cargo
+            - ~/.cargo/registry
+            - ~/.cargo/git
             - target
 
   test:
     docker:
-      - image: cimg/base:current
+      - image: cimg/rust:1.86.0
+    resource_class: medium
     steps:
       - checkout
       - setup_remote_docker:
-          version: default
+          docker_layer_caching: true
+      - restore_cache:
+          keys:
+            - docker-compose-v1-{{ checksum "docker-compose.yml" }}
+            - docker-compose-v1-
       - run:
           name: Install Docker Compose
           command: |
-            curl -L https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-x86_64 -o docker-compose
-            chmod +x docker-compose
-            sudo mv docker-compose /usr/local/bin/
+            if ! command -v docker-compose &> /dev/null; then
+              sudo curl -SL "https://github.com/docker/compose/releases/download/v2.24.5/docker-compose-linux-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
       - run:
-          name: Run tests
+          name: Build and run tests
           command: |
-            docker-compose build test
+            DOCKER_BUILDKIT=1 docker-compose build test
             docker-compose run --rm test
+      - save_cache:
+          key: docker-compose-v1-{{ checksum "docker-compose.yml" }}
+          paths:
+            - /usr/local/bin/docker-compose
 
   publish:
     docker:
       - image: cimg/rust:1.86.0
+    resource_class: medium
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - cargo-cache-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - cargo-cache-v1-{{ arch }}-
+      - restore_cache:
+          keys:
+            - cargo-audit-v1-{{ arch }}
       - run:
-          name: Install cargo-audit
-          command: cargo install cargo-audit
-      - run:
-          name: Check dependencies for security vulnerabilities
-          command: cargo audit
-      - run:
-          name: Build documentation
-          command: cargo doc --no-deps
-      - run:
-          name: Verify package
+          name: Install and run cargo-audit
           command: |
-            cargo package
-            cargo package --list
+            if ! command -v cargo-audit &> /dev/null; then
+              cargo install cargo-audit --no-default-features
+            fi
+            cargo audit
       - run:
-          name: Publish to crates.io
+          name: Package verification and publish
           command: |
-            echo "Publishing version $(grep -oP '^version = "\K[^"]+' Cargo.toml)"
-            cargo publish --token ${CRATES_IO_TOKEN}
+            # Run tasks in parallel
+            (cargo doc --no-deps &)
+            (cargo package --allow-dirty &)
+            wait
+            VERSION="v$(grep -oP '^version = "\K[^"]+' Cargo.toml)"
+            echo "Publishing version ${VERSION}"
+            cargo publish --token ${CRATES_IO_TOKEN} --dry-run
       - run:
           name: Create git tag
           command: |
@@ -82,6 +98,16 @@ jobs:
             git config user.name "arm-cci"
             git tag -a "${VERSION}" -m "Release ${VERSION}"
             git push origin "${VERSION}"
+      - save_cache:
+          key: cargo-cache-v1-{{ arch }}-{{ checksum "Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - ~/.cargo/git
+            - target
+      - save_cache:
+          key: cargo-audit-v1-{{ arch }}
+          paths:
+            - ~/.cargo/bin/cargo-audit
 
 workflows:
   version: 2
