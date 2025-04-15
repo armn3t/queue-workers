@@ -81,15 +81,20 @@ jobs:
             fi
             cargo audit
       - run:
+          name: Build documentation
+          command: cargo doc --no-deps
+      - run:
+          name: Package verification
+          command: |
+            cargo package --list
+            cargo package
+      - run:
           name: Package verification and publish
           command: |
-            # Run tasks in parallel
-            (cargo doc --no-deps &)
-            (cargo package --allow-dirty &)
-            wait
             VERSION="v$(grep -oP '^version = "\K[^"]+' Cargo.toml)"
             echo "Publishing version ${VERSION}"
             cargo publish --token ${CRATES_IO_TOKEN} --dry-run
+            
       - run:
           name: Create git tag
           command: |
