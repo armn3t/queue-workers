@@ -82,6 +82,6 @@ workflows:
           context: crates-io-publish-context
           requires:
             - test
-          # filters:
-          #   branches:
-          #     only: master
+          filters:
+            branches:
+              only: master
