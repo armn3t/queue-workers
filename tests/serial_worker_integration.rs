@@ -9,6 +9,10 @@ use queue_workers::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{debug, info, warn};
+
+mod common;
+use common::init_test_logging;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct EmailJob {
@@ -53,7 +57,11 @@ async fn setup_redis_queue(queue_name: &str) -> RedisQueue<EmailJob> {
 
 #[tokio::test]
 async fn test_complete_workflow() {
+    init_test_logging();
+    info!("Starting complete workflow test");
+
     let queue = setup_redis_queue("test_complete_workflow").await;
+    debug!("Redis queue initialized");
 
     let successful_job = EmailJob {
         id: "email-1".to_string(),
@@ -62,6 +70,7 @@ async fn test_complete_workflow() {
         attempts: 0,
         should_fail: false,
     };
+    debug!(job_id = %successful_job.id, "Created successful test job");
 
     let failing_job = EmailJob {
         id: "email-2".to_string(),
@@ -97,12 +106,17 @@ async fn test_complete_workflow() {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty"),
     }
+    info!("Complete workflow test finished");
 }
 
 #[tokio::test]
 async fn test_concurrent_workers() {
+    init_test_logging();
+    info!("Starting concurrent workers test");
+
     let queue =
         setup_redis_queue(&format!("test_concurrent_workers-{}", uuid::Uuid::new_v4())).await;
+    debug!("Redis queue initialized");
 
     for i in 0..5 {
         let job = EmailJob {
@@ -112,6 +126,7 @@ async fn test_concurrent_workers() {
             attempts: 0,
             should_fail: false,
         };
+        debug!(job_id = %job.id, "Pushing job to queue");
         queue.push(job).await.expect("Failed to push job");
     }
 
@@ -149,6 +164,7 @@ async fn test_concurrent_workers() {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty after processing"),
     }
+    info!("Concurrent workers test finished");
 }
 
 #[tokio::test]

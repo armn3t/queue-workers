@@ -49,7 +49,6 @@ impl<J> RedisQueue<J> {
     }
 
     async fn get_connection(&self) -> Result<MultiplexedConnection, QueueWorkerError> {
-        // Add timeout to prevent hanging indefinitely
         match tokio::time::timeout(
             Duration::from_secs(5),
             self.client.get_multiplexed_async_connection(),

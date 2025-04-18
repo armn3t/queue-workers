@@ -267,6 +267,22 @@ let worker = ConcurrentWorker::new(queue.clone(), config);
 worker.start_with_shutdown(shutdown_rx).await?;
 ```
 
+## Logging
+
+This library uses the `log` crate as a logging facade, allowing you to choose your preferred logging implementation. For basic usage:
+
+```rust
+// Using env_logger
+env_logger::init();
+
+// Or using tracing
+tracing_subscriber::fmt()
+    .with_env_filter(EnvFilter::from_default_env())
+    .init();
+```
+
+For detailed logging configuration, including production setups and testing configurations, see [LOGGING.md](docs/LOGGING.md).
+
 ## Contributing
 
 1. Fork the repository

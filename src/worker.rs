@@ -1,4 +1,5 @@
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
+use log;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -42,40 +43,42 @@ where
         }
     }
 
-    async fn handle_shutdown(&self) -> Result<(), QueueWorkerError> {
-        println!("Now: {}", chrono::Utc::now());
-        tokio::time::sleep(self.config.shutdown_timeout).await;
-        println!("After: {}", chrono::Utc::now());
-        Ok(())
-    }
-
     pub async fn start(&self) -> Result<(), QueueWorkerError> {
         let mut shutdown_rx = self.shutdown_signal.resubscribe();
 
+        log::info!("Starting serial worker...");
         loop {
-            let job_result = self.handle_jobs();
+            let job_result = self.process_job();
             tokio::pin!(job_result);
 
             tokio::select! {
-                _ = &mut job_result => {
+                result = &mut job_result => {
+                    match result {
+                      Ok(_) => {
+                          log::info!("Job executed successfully");
+                      }
+                      Err(e) => {
+                          log::error!("Job failed to execute: {e}");
+                      }
+                    };
                     continue;
                 }
                 result = shutdown_rx.recv() => {
                     match result {
                         Ok(_r) => {
-                            println!("Shutdown signal received, waiting for running jobs to complete...");
+                            log::info!("Shutdown signal received. Waiting for {:?}s for running jobs to complete...", self.config.shutdown_timeout);
                         }
-                        Err(_e) => {
-                            println!("Shutdown signal receiver closed");
+                        Err(e) => {
+                            log::error!("Shutdown signal receiver errored: {e}");
                         }
                     };
                     self.is_shutting_down.store(true, Ordering::Relaxed);
                     tokio::select! {
                         _ = &mut job_result => {
-                            println!("All jobs completed, shutting down...");
+                            log::info!("All jobs completed, shutting down...");
                         }
                         _ = self.handle_shutdown() => {
-                            println!("Shutdown timeout reached, forcing shutdown...");
+                            log::info!("Shutdown timeout reached, forcing shutdown...");
                         }
                     }
                     break Ok(())
@@ -84,12 +87,17 @@ where
         }
     }
 
-    async fn handle_jobs(&self) -> Result<(), QueueWorkerError> {
+    async fn handle_shutdown(&self) -> Result<(), QueueWorkerError> {
+        tokio::time::sleep(self.config.shutdown_timeout).await;
+        Ok(())
+    }
+
+    async fn process_job(&self) -> Result<(), QueueWorkerError> {
         if self.is_shutting_down.load(Ordering::Relaxed) {
-            println!("Shutting down...");
+            log::info!("No more jobs started since worker is shutting down");
             return Ok(());
         }
-        println!("Handling jobs...");
+        log::debug!("Handling new job");
         match self.queue.pop().await {
             Ok(job) => {
                 let mut attempts: u32 = 0;
