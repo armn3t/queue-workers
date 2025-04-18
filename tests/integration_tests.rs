@@ -88,7 +88,8 @@ async fn test_complete_workflow() {
         retry_delay: Duration::from_millis(100),
         shutdown_timeout: Duration::from_secs(1),
     };
-    let worker = Worker::new(queue.clone(), config);
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+    let worker = Worker::new(queue.clone(), config, shutdown_rx);
 
     // Run the worker for a limited time
     tokio::select! {
@@ -105,7 +106,8 @@ async fn test_complete_workflow() {
 
 #[tokio::test]
 async fn test_concurrent_workers() {
-    let queue = setup_redis_queue("test_concurrent_workers").await;
+    let queue =
+        setup_redis_queue(&format!("test_concurrent_workers-{}", uuid::Uuid::new_v4())).await;
 
     // Push multiple jobs
     for i in 0..5 {
@@ -132,7 +134,8 @@ async fn test_concurrent_workers() {
 
         let cloned_queue = queue.clone();
         let handle = tokio::spawn(async move {
-            let worker = Worker::new(cloned_queue, config);
+            let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+            let worker = Worker::new(cloned_queue, config, shutdown_rx);
 
             // Run worker for a limited time
             tokio::select! {

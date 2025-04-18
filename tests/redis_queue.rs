@@ -36,7 +36,8 @@ impl Job for TestJob {
 async fn test_redis_queue_push_pop() {
     let redis_url = get_redis_url();
     let queue =
-        RedisQueue::<TestJob>::new(&redis_url, "test_queue").expect("Failed to create Redis queue");
+        RedisQueue::<TestJob>::new(&redis_url, &format!("test_queue-{}", uuid::Uuid::new_v4()))
+            .expect("Failed to create Redis queue");
 
     // Create a test job
     let job = TestJob {
