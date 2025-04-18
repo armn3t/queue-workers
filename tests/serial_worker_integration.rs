@@ -55,7 +55,6 @@ async fn setup_redis_queue(queue_name: &str) -> RedisQueue<EmailJob> {
 async fn test_complete_workflow() {
     let queue = setup_redis_queue("test_complete_workflow").await;
 
-    // Create test jobs
     let successful_job = EmailJob {
         id: "email-1".to_string(),
         to: "user@example.com".to_string(),
@@ -72,7 +71,6 @@ async fn test_complete_workflow() {
         should_fail: true,
     };
 
-    // Push jobs to queue
     queue
         .push(successful_job.clone())
         .await
@@ -82,7 +80,6 @@ async fn test_complete_workflow() {
         .await
         .expect("Failed to push failing job");
 
-    // Create worker with custom config
     let config = WorkerConfig {
         retry_attempts: 2,
         retry_delay: Duration::from_millis(100),
@@ -91,13 +88,11 @@ async fn test_complete_workflow() {
     let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
     let worker = Worker::new(queue.clone(), config, shutdown_rx);
 
-    // Run the worker for a limited time
     tokio::select! {
         _ = worker.start() => {},
         _ = sleep(Duration::from_secs(2)) => {},
     }
 
-    // Try to pop more jobs - should be empty
     match queue.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty"),
@@ -109,7 +104,6 @@ async fn test_concurrent_workers() {
     let queue =
         setup_redis_queue(&format!("test_concurrent_workers-{}", uuid::Uuid::new_v4())).await;
 
-    // Push multiple jobs
     for i in 0..5 {
         let job = EmailJob {
             id: format!("email-{}", i),
@@ -121,7 +115,6 @@ async fn test_concurrent_workers() {
         queue.push(job).await.expect("Failed to push job");
     }
 
-    // Create multiple workers
     let worker_count = 3;
     let mut handles = Vec::new();
 
@@ -137,7 +130,6 @@ async fn test_concurrent_workers() {
             let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
             let worker = Worker::new(cloned_queue, config, shutdown_rx);
 
-            // Run worker for a limited time
             tokio::select! {
                 _ = worker.start() => {},
                 _ = sleep(Duration::from_secs(1)) => {
@@ -149,12 +141,10 @@ async fn test_concurrent_workers() {
         handles.push(handle);
     }
 
-    // Wait for all workers to complete
     for handle in handles {
         handle.await.expect("Worker task failed");
     }
 
-    // Verify queue is empty
     match queue.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty after processing"),
@@ -165,7 +155,6 @@ async fn test_concurrent_workers() {
 async fn test_queue_persistence() {
     let queue = setup_redis_queue("test_queue_persistence").await;
 
-    // Create and push a job
     let job = EmailJob {
         id: "persistent-email".to_string(),
         to: "user@example.com".to_string(),
@@ -179,7 +168,6 @@ async fn test_queue_persistence() {
     // Create new queue instance (simulating process restart)
     let new_queue = setup_redis_queue("test_queue_persistence").await;
 
-    // Try to pop job from new queue instance
     let retrieved_job = new_queue.pop().await.expect("Failed to pop job");
     assert_eq!(retrieved_job.id, "persistent-email");
     assert_eq!(retrieved_job.subject, "Persistent Test");
