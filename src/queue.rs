@@ -10,7 +10,7 @@ pub enum QueueType {
 
 impl Default for QueueType {
     fn default() -> Self {
-        Self::FIFO // Make FIFO the default behavior
+        Self::FIFO
     }
 }
 

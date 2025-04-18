@@ -73,20 +73,28 @@ where
     }
 
     pub async fn start(&self) -> Result<(), QueueWorkerError> {
+        log::info!("Starting concurrent worker...");
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_jobs));
         let queue = Arc::new(self.queue.clone());
         let retry_attempts = self.config.retry_attempts;
         let retry_delay = self.config.retry_delay;
 
         loop {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("Permit to be available");
             let queue = queue.clone();
 
             tokio::spawn(async move {
                 let result = Self::process_job((*queue).clone(), retry_attempts, retry_delay).await;
                 if let Err(e) = result {
-                    eprintln!("Worker error: {}", e);
+                    log::error!("Worker failed to process job: {e}");
+                } else {
+                    log::info!("Job executed successfully")
                 }
+
                 drop(permit);
             });
 

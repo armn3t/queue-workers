@@ -1,9 +1,47 @@
 use async_trait::async_trait;
 use queue_workers::{error::QueueWorkerError, job::Job, queue::Queue};
 use std::sync::Arc;
+use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tracing::{Level, Subscriber};
+use tracing_subscriber::{
+    EnvFilter, Layer,
+    fmt::{self, format::FmtSpan},
+    util::SubscriberInitExt,
+};
+
+static INIT: Once = Once::new();
+
+/// Initializes logging for integration tests with a consistent configuration.
+/// This function is safe to call multiple times as it will only initialize logging once.
+pub fn init_test_logging() {
+    INIT.call_once(|| {
+        // Create an environment filter that can be controlled via RUST_LOG
+        let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("queue_workers=debug,redis=debug,tower=warn,test=debug")
+        });
+
+        // Create a JSON formatting layer for test output
+        let json_layer = fmt::layer()
+            .json()
+            .with_thread_ids(true)
+            .with_thread_names(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_target(true)
+            .with_current_span(true)
+            .with_span_list(true);
+
+        // Combine layers and initialize the subscriber
+        use tracing_subscriber::layer::SubscriberExt;
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(json_layer)
+            .init();
+    });
+}
 
 #[derive(Clone, Debug)]
 pub struct TestJob {
@@ -122,5 +160,40 @@ impl Queue for TestQueue {
         let mut jobs = self.jobs.lock().await;
         jobs.pop()
             .ok_or_else(|| QueueWorkerError::JobNotFound("No jobs available".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing::{debug, error, info, warn};
+
+    #[test]
+    fn test_logging_levels() {
+        init_test_logging();
+
+        error!("This is an error message");
+        warn!("This is a warning message");
+        info!("This is an info message");
+        debug!("This is a debug message");
+
+        // Test structured logging
+        let test_value = 42;
+        info!(
+            test_value,
+            message = "This is a structured log message",
+            additional_field = "extra info"
+        );
+    }
+
+    #[test]
+    fn test_span_logging() {
+        init_test_logging();
+
+        let span = tracing::span!(Level::INFO, "test_span", test_field = "test_value");
+        let _guard = span.enter();
+
+        info!("This message is within the span");
+        debug!("This debug message should include span context");
     }
 }

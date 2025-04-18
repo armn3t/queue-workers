@@ -86,16 +86,13 @@ mod tests {
             data: "test".to_string(),
         });
 
-        // Check that a UUID was generated
         assert!(!metadata.id().is_nil());
 
-        // Check that status is Pending
         match metadata.status() {
             JobStatus::Pending => (),
             _ => panic!("New job should have Pending status"),
         }
 
-        // Check that created_at is recent (within last second)
         let now = chrono::Utc::now();
         let diff = now - metadata.created_at();
         assert!(diff.num_milliseconds() >= 0);
@@ -108,21 +105,18 @@ mod tests {
             data: "test".to_string(),
         });
 
-        // Test transition to Running
         metadata.update_status(JobStatus::Running);
         match metadata.status() {
             JobStatus::Running => (),
             _ => panic!("Status should be Running"),
         }
 
-        // Test transition to Completed
         metadata.update_status(JobStatus::Completed);
         match metadata.status() {
             JobStatus::Completed => (),
             _ => panic!("Status should be Completed"),
         }
 
-        // Test transition to Failed
         metadata.update_status(JobStatus::Failed("Test error".to_string()));
         match metadata.status() {
             JobStatus::Failed(msg) => assert_eq!(msg, "Test error"),
@@ -152,10 +146,8 @@ mod tests {
             data: "test".to_string(),
         });
 
-        // Test serialization
         let serialized = serde_json::to_string(&metadata).expect("Failed to serialize");
 
-        // Test deserialization
         let deserialized: JobMetadata<TestPayload> =
             serde_json::from_str(&serialized).expect("Failed to deserialize");
 
