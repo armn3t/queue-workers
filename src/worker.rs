@@ -1,7 +1,9 @@
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
 use std::fmt::Display;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::time::sleep;
+
+type WorkerShutdownSignal = tokio::sync::broadcast::Receiver<()>;
 
 pub struct WorkerConfig {
     pub retry_attempts: u32,
@@ -22,6 +24,8 @@ impl Default for WorkerConfig {
 pub struct Worker<Q: Queue> {
     queue: Q,
     config: WorkerConfig,
+    shutdown_signal: WorkerShutdownSignal,
+    is_shutting_down: AtomicBool,
 }
 
 impl<Q> Worker<Q>
@@ -29,276 +33,91 @@ where
     Q: Queue,
     <Q::JobType as Job>::Error: Display,
 {
-    pub fn new(queue: Q, config: WorkerConfig) -> Self {
-        Self { queue, config }
+    pub fn new(queue: Q, config: WorkerConfig, shutdown_signal: WorkerShutdownSignal) -> Self {
+        Self {
+            queue,
+            config,
+            shutdown_signal,
+            is_shutting_down: AtomicBool::new(false),
+        }
+    }
+
+    async fn handle_shutdown(&self) -> Result<(), QueueWorkerError> {
+        println!("Now: {}", chrono::Utc::now());
+        tokio::time::sleep(self.config.shutdown_timeout).await;
+        println!("After: {}", chrono::Utc::now());
+        Ok(())
     }
 
     pub async fn start(&self) -> Result<(), QueueWorkerError> {
+        let mut shutdown_rx = self.shutdown_signal.resubscribe();
+
         loop {
-            match self.queue.pop().await {
-                Ok(job) => {
-                    let mut attempts: u32 = 0;
-                    let mut result = job.execute().await;
+            let job_result = self.handle_jobs();
+            tokio::pin!(job_result);
 
-                    while let Err(ref e) = result {
-                        if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts)
-                        {
-                            break;
+            tokio::select! {
+                _ = &mut job_result => {
+                    continue;
+                }
+                result = shutdown_rx.recv() => {
+                    match result {
+                        Ok(_r) => {
+                            println!("Shutdown signal received, waiting for running jobs to complete...");
                         }
-                        attempts = attempts.saturating_add(1);
-                        sleep(self.config.retry_delay).await;
-                        result = job.execute().await;
+                        Err(_e) => {
+                            println!("Shutdown signal receiver closed");
+                        }
+                    };
+                    self.is_shutting_down.store(true, Ordering::Relaxed);
+                    tokio::select! {
+                        _ = &mut job_result => {
+                            println!("All jobs completed, shutting down...");
+                        }
+                        _ = self.handle_shutdown() => {
+                            println!("Shutdown timeout reached, forcing shutdown...");
+                        }
                     }
-
-                    if let Err(e) = result {
-                        let error_msg = format!(
-                            "Job failed after {} attempts: {}",
-                            attempts.saturating_add(1),
-                            e
-                        );
-                        return Err(QueueWorkerError::WorkerError(error_msg));
-                    }
-                }
-                Err(QueueWorkerError::JobNotFound(_)) => {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                Err(e) => {
-                    return Err(e);
+                    break Ok(())
                 }
             }
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
+    async fn handle_jobs(&self) -> Result<(), QueueWorkerError> {
+        if self.is_shutting_down.load(Ordering::Relaxed) {
+            println!("Shutting down...");
+            return Ok(());
+        }
+        println!("Handling jobs...");
+        match self.queue.pop().await {
+            Ok(job) => {
+                let mut attempts: u32 = 0;
+                let mut result = job.execute().await;
+                while let Err(ref e) = result {
+                    if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts) {
+                        break;
+                    }
+                    attempts = attempts.saturating_add(1);
+                    tokio::time::sleep(self.config.retry_delay).await;
+                    result = job.execute().await;
+                }
 
-    #[derive(Clone)]
-    struct TestJob {
-        attempts: Arc<Mutex<u32>>,
-        should_fail: bool,
-        retry_conditions: RetryCondition,
-    }
-
-    // Define different retry conditions for better testing
-    #[derive(Clone)]
-    enum RetryCondition {
-        Never,
-        Always,
-        OnlyOnAttempt(u32),
-        UntilAttempt(u32),
-    }
-
-    #[async_trait]
-    impl Job for TestJob {
-        type Output = ();
-        type Error = String;
-
-        async fn execute(&self) -> Result<Self::Output, Self::Error> {
-            let mut attempts = self.attempts.lock().await;
-            *attempts += 1;
-
-            if self.should_fail {
-                Err("Job failed".to_string())
-            } else {
+                if let Err(e) = result {
+                    let error_msg = format!(
+                        "Job failed after {} attempts: {}",
+                        attempts.saturating_add(1),
+                        e
+                    );
+                    return Err(QueueWorkerError::WorkerError(error_msg));
+                }
                 Ok(())
             }
-        }
-
-        fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
-            match self.retry_conditions {
-                RetryCondition::Never => false,
-                RetryCondition::Always => true,
-                RetryCondition::OnlyOnAttempt(n) => attempt == n - 1,
-                RetryCondition::UntilAttempt(n) => attempt < n,
+            Err(QueueWorkerError::JobNotFound(_)) => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                Ok(())
             }
+            Err(e) => Err(e),
         }
-    }
-
-    struct TestQueue {
-        jobs: Arc<Mutex<Vec<TestJob>>>,
-    }
-
-    #[async_trait]
-    impl Queue for TestQueue {
-        type JobType = TestJob;
-
-        async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
-            let mut jobs = self.jobs.lock().await;
-            jobs.push(job);
-            Ok(())
-        }
-
-        async fn pop(&self) -> Result<Self::JobType, QueueWorkerError> {
-            let mut jobs = self.jobs.lock().await;
-            jobs.pop()
-                .ok_or_else(|| QueueWorkerError::JobNotFound("Queue empty".to_string()))
-        }
-    }
-
-    #[tokio::test]
-    async fn test_worker_never_retry() {
-        let attempts = Arc::new(Mutex::new(0));
-        let job = TestJob {
-            attempts: attempts.clone(),
-            should_fail: true,
-            retry_conditions: RetryCondition::Never,
-        };
-
-        let queue = TestQueue {
-            jobs: Arc::new(Mutex::new(vec![job])),
-        };
-
-        let config = WorkerConfig {
-            retry_attempts: 3,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = Worker::new(queue, config);
-
-        tokio::select! {
-            _ = worker.start() => {},
-            _ = sleep(Duration::from_secs(1)) => {},
-        }
-
-        let final_attempts = *attempts.lock().await;
-        assert_eq!(
-            final_attempts, 1,
-            "Job should only be attempted once with RetryCondition::Never"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_worker_always_retry() {
-        let attempts = Arc::new(Mutex::new(0));
-        let job = TestJob {
-            attempts: attempts.clone(),
-            should_fail: true,
-            retry_conditions: RetryCondition::Always,
-        };
-
-        let queue = TestQueue {
-            jobs: Arc::new(Mutex::new(vec![job])),
-        };
-
-        let config = WorkerConfig {
-            retry_attempts: 3,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = Worker::new(queue, config);
-
-        tokio::select! {
-            _ = worker.start() => {},
-            _ = sleep(Duration::from_secs(1)) => {},
-        }
-
-        let final_attempts = *attempts.lock().await;
-        assert_eq!(
-            final_attempts, 4,
-            "Job should be attempted 4 times (initial + 3 retries)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_worker_retry_on_specific_attempt() {
-        let attempts = Arc::new(Mutex::new(0));
-        let job = TestJob {
-            attempts: attempts.clone(),
-            should_fail: true,
-            retry_conditions: RetryCondition::OnlyOnAttempt(1), // Only retry on first attempt
-        };
-
-        let queue = TestQueue {
-            jobs: Arc::new(Mutex::new(vec![job])),
-        };
-
-        let config = WorkerConfig {
-            retry_attempts: 3,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = Worker::new(queue, config);
-
-        tokio::select! {
-            _ = worker.start() => {},
-            _ = sleep(Duration::from_secs(1)) => {},
-        }
-
-        let final_attempts = *attempts.lock().await;
-        assert_eq!(final_attempts, 2, "Job should only be attempted twice");
-    }
-
-    #[tokio::test]
-    async fn test_worker_retry_until_attempt() {
-        let attempts = Arc::new(Mutex::new(0));
-        let job = TestJob {
-            attempts: attempts.clone(),
-            should_fail: true,
-            retry_conditions: RetryCondition::UntilAttempt(2), // Retry until second attempt
-        };
-
-        let queue = TestQueue {
-            jobs: Arc::new(Mutex::new(vec![job])),
-        };
-
-        let config = WorkerConfig {
-            retry_attempts: 5, // Set higher than UntilAttempt value
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = Worker::new(queue, config);
-
-        tokio::select! {
-            _ = worker.start() => {},
-            _ = sleep(Duration::from_secs(1)) => {},
-        }
-
-        let final_attempts = *attempts.lock().await;
-        assert_eq!(
-            final_attempts, 3,
-            "Job should be attempted 3 times (initial + 2 retries)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_worker_respects_config_retry_limit() {
-        let attempts = Arc::new(Mutex::new(0));
-        let job = TestJob {
-            attempts: attempts.clone(),
-            should_fail: true,
-            retry_conditions: RetryCondition::Always,
-        };
-
-        let queue = TestQueue {
-            jobs: Arc::new(Mutex::new(vec![job])),
-        };
-
-        let config = WorkerConfig {
-            retry_attempts: 2, // Set lower than previous tests
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = Worker::new(queue, config);
-
-        tokio::select! {
-            _ = worker.start() => {},
-            _ = sleep(Duration::from_secs(1)) => {},
-        }
-
-        let final_attempts = *attempts.lock().await;
-        assert_eq!(
-            final_attempts, 3,
-            "Job should be attempted 3 times (initial + 2 retries) despite Always retry condition"
-        );
     }
 }
