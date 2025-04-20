@@ -48,8 +48,7 @@ where
 
         log::info!("Starting serial worker...");
         loop {
-            let job_result = self.process_job();
-            tokio::pin!(job_result);
+            let mut job_result = Box::pin(self.process_job());
 
             tokio::select! {
                 result = &mut job_result => {
