@@ -14,6 +14,7 @@ authors = ["armn3t"]
 [dependencies]
 async-trait = "0.1.88"
 chrono = { version = "0.4.40", features = ["serde"] }
+futures = "0.3.31"
 log = "0.4"
 num_cpus = "1.16.0"
 redis = { version = "0.29.5", features = ["tokio-comp"] }
