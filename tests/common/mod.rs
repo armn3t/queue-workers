@@ -43,13 +43,28 @@ pub fn init_test_logging() {
     });
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TestJob {
     pub attempts: Arc<Mutex<u32>>,
     pub should_fail: bool,
     pub retry_conditions: RetryCondition,
     pub job_duration: Duration,
     pub completed: Arc<AtomicBool>,
+    pub execution_tracker:
+        Option<Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>>,
+}
+
+impl std::fmt::Debug for TestJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TestJob")
+            .field("attempts", &self.attempts)
+            .field("should_fail", &self.should_fail)
+            .field("retry_conditions", &self.retry_conditions)
+            .field("job_duration", &self.job_duration)
+            .field("completed", &self.completed)
+            .field("execution_tracker", &format!("<function>"))
+            .finish()
+    }
 }
 
 impl TestJob {
@@ -60,6 +75,7 @@ impl TestJob {
             retry_conditions: RetryCondition::Never,
             job_duration: Duration::from_millis(0),
             completed: Arc::new(AtomicBool::new(false)),
+            execution_tracker: None,
         }
     }
 
@@ -87,6 +103,24 @@ impl TestJob {
         self.completed = completed;
         self
     }
+
+    pub fn with_execution_tracker<F, Fut>(mut self, tracker: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: futures::Future<Output = ()> + Send + 'static,
+    {
+        self.execution_tracker = Some(Arc::new(move || Box::pin(tracker())));
+        self
+    }
+
+    pub fn with_concurrent_execution_tracker<F, Fut>(mut self, tracker: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: futures::Future<Output = ()> + Send + 'static,
+    {
+        self.execution_tracker = Some(Arc::new(move || Box::pin(tracker())));
+        self
+    }
 }
 
 impl Default for TestJob {
@@ -97,6 +131,7 @@ impl Default for TestJob {
             retry_conditions: RetryCondition::Never,
             job_duration: Duration::from_millis(10),
             completed: Arc::new(AtomicBool::new(false)),
+            execution_tracker: None,
         }
     }
 }
@@ -118,7 +153,14 @@ impl Job for TestJob {
         let mut attempts = self.attempts.lock().await;
         *attempts += 1;
         println!("Job attempt: {}", *attempts);
-        tokio::time::sleep(self.job_duration).await;
+
+        // Execute any tracker if present
+        if let Some(tracker) = &self.execution_tracker {
+            (tracker)().await;
+        } else {
+            tokio::time::sleep(self.job_duration).await;
+        }
+
         println!(
             "Job duration complete. Job should fail: {}",
             self.should_fail

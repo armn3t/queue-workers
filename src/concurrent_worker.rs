@@ -1,10 +1,13 @@
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
+
+use futures::stream::{FuturesUnordered, StreamExt};
 use log;
 use std::fmt::Display;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tokio::sync::Semaphore;
+// use tokio::sync::Semaphore;
 use tokio::time::sleep;
 
 pub struct ConcurrentWorkerConfig {
@@ -28,6 +31,7 @@ impl Default for ConcurrentWorkerConfig {
 pub struct ConcurrentWorker<Q: Queue> {
     queue: Q,
     config: ConcurrentWorkerConfig,
+    is_shutting_down: Arc<AtomicBool>,
 }
 
 impl<Q> ConcurrentWorker<Q>
@@ -37,25 +41,31 @@ where
     <Q::JobType as Job>::Output: Send,
 {
     pub fn new(queue: Q, config: ConcurrentWorkerConfig) -> Self {
-        Self { queue, config }
+        Self {
+            queue,
+            config,
+            is_shutting_down: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    async fn process_job(
-        queue: Q,
-        retry_attempts: u32,
-        retry_delay: Duration,
-    ) -> Result<(), QueueWorkerError> {
+    async fn process_job(&self, queue: Arc<Q>) -> Result<(), QueueWorkerError> {
+        if self.is_shutting_down.load(Ordering::Relaxed) {
+            log::info!("Worker is shutting down. Can't pick up any new jobs");
+            return Ok(());
+        }
+        log::debug!("Processing new job");
         match queue.pop().await {
             Ok(job) => {
+                log::debug!("Picked up new job from queue");
                 let mut attempts: u32 = 0;
                 let mut result = job.execute().await;
 
                 while let Err(ref e) = result {
-                    if attempts >= retry_attempts || !job.should_retry(e, attempts) {
+                    if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts) {
                         break;
                     }
                     attempts = attempts.saturating_add(1);
-                    sleep(retry_delay).await;
+                    sleep(self.config.retry_delay).await;
                     result = job.execute().await;
                 }
 
@@ -69,7 +79,11 @@ where
                 }
                 Ok(())
             }
-            Err(QueueWorkerError::JobNotFound(_)) => Ok(()),
+            Err(QueueWorkerError::JobNotFound(_)) => {
+                // Backpressure for empty queue
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                Ok(())
+            }
             Err(e) => Err(e),
         }
     }
@@ -80,186 +94,59 @@ where
     ) -> Result<(), QueueWorkerError> {
         let mut shutdown = Box::pin(shutdown);
         log::info!("Starting concurrent worker...");
-        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_jobs));
+        // let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_jobs));
         let queue = Arc::new(self.queue.clone());
-        let retry_attempts = self.config.retry_attempts;
-        let retry_delay = self.config.retry_delay;
+
+        let mut in_progress_jobs = FuturesUnordered::new();
 
         loop {
             tokio::select! {
                 _ = &mut shutdown => {
                     log::info!("Shutdown signal received, waiting for {:?} for running jobs to complete...", self.config.shutdown_timeout);
+                    self.is_shutting_down.store(true, Ordering::Relaxed);
+
+                    if in_progress_jobs.is_empty() {
+                        return Ok(());
+                    }
+
                     let timeout = tokio::time::sleep(self.config.shutdown_timeout);
                     tokio::pin!(timeout);
-
                     loop {
-                        if semaphore.available_permits() == self.config.max_concurrent_jobs {
-                            break;
-                        }
-
                         tokio::select! {
                             _ = &mut timeout => {
-                                println!("Shutdown timeout reached, forcing shutdown...");
-                                break;
+                                log::info!("Shutdown timeout reached, forcing shutdown...");
+                                return Ok(());
                             }
-                            _ = tokio::time::sleep(Duration::from_millis(100)) => continue,
+                            _ = in_progress_jobs.next() => {
+                                if in_progress_jobs.is_empty() {
+                                    log::info!("All jobs completed, shutting down...");
+                                    return Ok(());
+                                }
+                            }
                         }
                     }
-                    return Ok(());
                 }
-                _ = async {
-                    let permit = semaphore.clone().acquire_owned().await.unwrap();
-                    let queue = queue.clone();
-
-                    tokio::spawn(async move {
-                        let result = Self::process_job((*queue).clone(), retry_attempts, retry_delay).await;
-                        if let Err(e) = result {
-                            eprintln!("Worker error: {}", e);
+                result = in_progress_jobs.next(), if !in_progress_jobs.is_empty() => {
+                    match result {
+                        Some(Ok(())) => {
+                            log::info!("Job executed successfully");
                         }
-                        drop(permit);
-                    });
-
-                    sleep(Duration::from_millis(10)).await;
-                } => {}
+                        Some(Err(e)) => {
+                            log::error!("Job failed to execute: {}", e);
+                        }
+                        None => {
+                            log::info!("No jobs being executed...");
+                        }
+                    }
+                }
+                _ = async {}, if in_progress_jobs.len() < self.config.max_concurrent_jobs => {
+                    let queue = queue.clone();
+                    let job_future = async move {
+                        self.process_job(queue.clone()).await
+                    };
+                    in_progress_jobs.push(job_future);
+                }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use tokio::time::sleep;
-
-    #[derive(Clone)]
-    struct TestJob {
-        attempts: Arc<Mutex<u32>>,
-        should_fail: bool,
-        retry_on_error: bool, // New field to control retry behavior
-    }
-
-    #[async_trait]
-    impl Job for TestJob {
-        type Output = ();
-        type Error = String;
-
-        async fn execute(&self) -> Result<Self::Output, Self::Error> {
-            let mut attempts = self.attempts.lock().await;
-            *attempts += 1;
-
-            if self.should_fail {
-                Err("Job failed".to_string())
-            } else {
-                Ok(())
-            }
-        }
-
-        fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
-            // Only retry if retry_on_error is true and we haven't exceeded 2 attempts
-            self.retry_on_error && attempt < 2
-        }
-    }
-
-    #[derive(Clone)]
-    struct TestQueue {
-        jobs: Arc<Mutex<Vec<TestJob>>>,
-    }
-
-    #[async_trait]
-    impl Queue for TestQueue {
-        type JobType = TestJob;
-
-        async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
-            let mut jobs = self.jobs.lock().await;
-            jobs.push(job);
-            Ok(())
-        }
-
-        async fn pop(&self) -> Result<Self::JobType, QueueWorkerError> {
-            let mut jobs = self.jobs.lock().await;
-            jobs.pop()
-                .ok_or_else(|| QueueWorkerError::JobNotFound("Queue empty".to_string()))
-        }
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_worker() {
-        let total_jobs = 10;
-        let jobs = Arc::new(Mutex::new(
-            (0..total_jobs)
-                .map(|i| TestJob {
-                    attempts: Arc::new(Mutex::new(0)),
-                    should_fail: i % 3 == 0,
-                    retry_on_error: i % 2 == 0, // Only retry even-numbered jobs
-                })
-                .collect::<Vec<_>>(),
-        ));
-
-        let queue = TestQueue { jobs: jobs.clone() };
-
-        let config = ConcurrentWorkerConfig {
-            max_concurrent_jobs: 3,
-            retry_attempts: 2,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = ConcurrentWorker::new(queue, config);
-        let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-
-        tokio::select! {
-            _ = worker.start(async move {
-                let _ = shutdown_rx.recv().await;
-            }) => {},
-            _ = sleep(Duration::from_secs(2)) => {},
-        }
-
-        let remaining_jobs = jobs.lock().await.len();
-        assert_eq!(remaining_jobs, 0, "All jobs should have been processed");
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_worker_shutdown() {
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
-        let jobs = Arc::new(Mutex::new(
-            (0..10) // Reduced number of jobs to ensure test reliability
-                .map(|_| TestJob {
-                    attempts: Arc::new(Mutex::new(0)),
-                    should_fail: false,
-                    retry_on_error: true,
-                })
-                .collect::<Vec<_>>(),
-        ));
-
-        let queue = TestQueue { jobs: jobs.clone() };
-
-        let config = ConcurrentWorkerConfig {
-            max_concurrent_jobs: 5,
-            retry_attempts: 1,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
-
-        let worker = ConcurrentWorker::new(queue, config);
-
-        // Spawn a task to send shutdown signal after some jobs should be processed
-        tokio::spawn(async move {
-            sleep(Duration::from_millis(500)).await;
-            shutdown_tx.send(()).unwrap();
-        });
-
-        // Start the worker and wait for it to complete
-        worker
-            .start(async move {
-                let _ = shutdown_rx.recv().await; // Added .await here
-            })
-            .await
-            .unwrap();
-
-        let remaining_jobs = jobs.lock().await.len();
-        assert!(remaining_jobs < 10, "Some jobs should have been processed");
     }
 }
