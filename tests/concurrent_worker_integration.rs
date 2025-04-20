@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use queue_workers::{
+    concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig},
     error::QueueWorkerError,
     job::Job,
     queue::Queue,
     redis_queue::RedisQueue,
-    worker::{Worker, WorkerConfig},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 use tracing::{debug, info};
+use uuid::Uuid;
 
 mod common;
 use common::init_test_logging;
@@ -74,6 +75,7 @@ impl Job for EmailJob {
         }
 
         // Simulate some work
+        debug!("Executing email job {}", self.id);
         sleep(Duration::from_millis(100)).await;
 
         // Increment attempts (in a real implementation, this would be handled differently)
@@ -103,6 +105,10 @@ impl Job for EmailJob {
 
         result
     }
+
+    fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
+        attempt < 2 // Retry up to 2 times (3 attempts total)
+    }
 }
 
 async fn setup_redis_queue(queue_name: &str) -> RedisQueue<EmailJob> {
@@ -116,16 +122,17 @@ async fn test_complete_workflow() {
     init_test_logging();
     info!("Starting complete workflow test");
 
-    let queue = setup_redis_queue("test_complete_workflow").await;
+    let queue = setup_redis_queue("concurrent_test_complete_workflow").await;
     debug!("Redis queue initialized");
 
+    // Create and push jobs
     // Create a notifier to track when jobs complete
     let completion_notifier = Arc::new(Notify::new());
 
     let successful_job = EmailJob::new(
         "email-1".to_string(),
         "user@example.com".to_string(),
-        "Test Subject".to_string(),
+        "Hello".to_string(),
         false,
     )
     .with_completion_tracking()
@@ -136,7 +143,7 @@ async fn test_complete_workflow() {
     let failing_job = EmailJob::new(
         "email-2".to_string(),
         "user@example.com".to_string(),
-        "Failing Test".to_string(),
+        "Fail".to_string(),
         true,
     )
     .with_start_tracking()
@@ -151,17 +158,22 @@ async fn test_complete_workflow() {
         .await
         .expect("Failed to push failing job");
 
-    let config = WorkerConfig {
+    // Create worker with configuration
+    let config = ConcurrentWorkerConfig {
+        max_concurrent_jobs: 2,
         retry_attempts: 2,
         retry_delay: Duration::from_millis(100),
         shutdown_timeout: Duration::from_secs(1),
     };
+
+    let worker = ConcurrentWorker::new(queue.clone(), config);
+
     // Create a counter to track completed jobs
     let jobs_processed = Arc::new(AtomicBool::new(false));
     let jobs_processed_clone = jobs_processed.clone();
 
+    // Run worker with a shutdown signal based on job completion
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-    let worker = Worker::new(queue.clone(), config);
 
     // Use a simple timeout approach instead of notifications
     tokio::spawn(async move {
@@ -189,6 +201,7 @@ async fn test_complete_workflow() {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty"),
     }
+
     info!("Complete workflow test finished");
 }
 
@@ -197,78 +210,69 @@ async fn test_concurrent_workers() {
     init_test_logging();
     info!("Starting concurrent workers test");
 
-    let queue =
-        setup_redis_queue(&format!("test_concurrent_workers-{}", uuid::Uuid::new_v4())).await;
+    let queue_name = format!("concurrent_test_workers-{}", Uuid::new_v4());
+    let queue = setup_redis_queue(&queue_name).await;
     debug!("Redis queue initialized");
 
-    for i in 0..5 {
+    // Create and push multiple jobs
+    for i in 0..10 {
         let job = EmailJob::new(
             format!("email-{}", i),
             "user@example.com".to_string(),
-            format!("Test Subject {}", i),
+            format!("Test {}", i),
             false,
         );
         debug!(job_id = %job.id, "Pushing job to queue");
         queue.push(job).await.expect("Failed to push job");
     }
 
-    let worker_count = 3;
-    let mut handles = Vec::new();
+    let config = ConcurrentWorkerConfig {
+        max_concurrent_jobs: 2,
+        retry_attempts: 1,
+        retry_delay: Duration::from_millis(50),
+        shutdown_timeout: Duration::from_secs(1),
+    };
 
-    for worker_id in 0..worker_count {
-        let config = WorkerConfig {
-            retry_attempts: 1,
-            retry_delay: Duration::from_millis(100),
-            shutdown_timeout: Duration::from_secs(1),
-        };
+    // Create a clone of the queue for checking later
+    let queue_check = queue.clone();
 
-        let cloned_queue = queue.clone();
-        let handle = tokio::spawn(async move {
-            let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-            let worker = Worker::new(cloned_queue.clone(), config);
+    // Use a simpler approach with a fixed timeout
+    let handle = tokio::spawn(async move {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+        let worker = ConcurrentWorker::new(queue.clone(), config);
 
-            // Spawn a task to wait a reasonable amount of time and then send shutdown signal
-            tokio::spawn(async move {
-                // Wait a reasonable amount of time for jobs to complete
-                sleep(Duration::from_secs(2)).await;
-
-                debug!("Sending shutdown signal to worker {}", worker_id);
-                shutdown_tx.send(()).unwrap();
-            });
-
-            worker
-                .start(async move {
-                    // Both receiving a value and channel closure are valid shutdown signals
-                    match shutdown_rx.recv().await {
-                        Ok(_) => {}                                                    // Received shutdown signal
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {} // Channel closed
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {} // Missed messages, but still continue with shutdown
-                    }
-                })
-                .await
-                .unwrap();
+        // Start a task to send shutdown signal after a fixed time
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(3)).await;
+            debug!("Sending shutdown signal to worker");
+            shutdown_tx.send(()).unwrap();
         });
 
-        handles.push(handle);
-    }
+        worker
+            .start(async move {
+                let _ = shutdown_rx.recv().await;
+            })
+            .await
+            .unwrap();
+    });
 
-    for handle in handles {
-        handle.await.expect("Worker task failed");
-    }
+    handle.await.expect("Worker task failed");
 
     // Give some time for the worker to finish
     sleep(Duration::from_millis(500)).await;
 
-    match queue.pop().await {
+    match queue_check.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty after processing"),
     }
-    info!("Concurrent workers test finished");
 }
 
 #[tokio::test]
 async fn test_queue_persistence() {
-    let queue = setup_redis_queue("test_queue_persistence").await;
+    init_test_logging();
+    info!("Starting queue persistence test");
+
+    let queue = setup_redis_queue("concurrent_test_queue_persistence").await;
 
     let job = EmailJob::new(
         "persistent-email".to_string(),
@@ -280,9 +284,11 @@ async fn test_queue_persistence() {
     queue.push(job.clone()).await.expect("Failed to push job");
 
     // Create new queue instance (simulating process restart)
-    let new_queue = setup_redis_queue("test_queue_persistence").await;
+    let new_queue = setup_redis_queue("concurrent_test_queue_persistence").await;
 
     let retrieved_job = new_queue.pop().await.expect("Failed to pop job");
     assert_eq!(retrieved_job.id, "persistent-email");
     assert_eq!(retrieved_job.subject, "Persistent Test");
+
+    info!("Queue persistence test finished");
 }

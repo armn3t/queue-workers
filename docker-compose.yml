@@ -20,6 +20,7 @@ services:
       dockerfile: Dockerfile.test
     environment:
       - REDIS_URL=redis://redis:6379
+      - DISABLE_TEST_LOGGING=1
     depends_on:
       redis:
         condition: service_healthy

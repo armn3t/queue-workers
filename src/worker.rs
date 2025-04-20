@@ -23,7 +23,6 @@ impl Default for WorkerConfig {
 pub struct Worker<Q: Queue> {
     queue: Q,
     config: WorkerConfig,
-    // shutdown_signal: WorkerShutdownSignal,
     is_shutting_down: AtomicBool,
 }
 
@@ -87,12 +86,13 @@ where
 
     async fn process_job(&self) -> Result<(), QueueWorkerError> {
         if self.is_shutting_down.load(Ordering::Relaxed) {
-            log::info!("No more jobs started since worker is shutting down");
+            log::info!("Worker is shutting down. Can't pick up any new jobs");
             return Ok(());
         }
-        log::debug!("Handling new job");
+        log::debug!("Processing new job");
         match self.queue.pop().await {
             Ok(job) => {
+                log::debug!("Picked up new job from queue");
                 let mut attempts: u32 = 0;
                 let mut result = job.execute().await;
                 while let Err(ref e) = result {
@@ -115,7 +115,8 @@ where
                 Ok(())
             }
             Err(QueueWorkerError::JobNotFound(_)) => {
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                // Backpressure for empty queue
+                tokio::time::sleep(Duration::from_millis(500)).await;
                 Ok(())
             }
             Err(e) => Err(e),
