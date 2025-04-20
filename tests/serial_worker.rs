@@ -3,6 +3,7 @@ use queue_workers::{
     // error::QueueWorkerError,
     // job::Job,
     // queue::Queue,
+    metrics::NoopMetrics,
     worker::{Worker, WorkerConfig},
 };
 use std::sync::Arc;
@@ -30,6 +31,7 @@ async fn test_worker_job_suceeds_without_retries() {
         retry_attempts: 3,
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_secs(1),
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -76,6 +78,7 @@ async fn test_worker_job_retries_until_it_fails() {
         retry_attempts: 3,
         retry_delay: Duration::from_millis(1),
         shutdown_timeout: Duration::from_secs(1),
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -124,6 +127,7 @@ async fn test_worker_job_retries_once() {
         retry_attempts: 3,
         retry_delay: Duration::from_millis(1),
         shutdown_timeout: Duration::from_secs(1),
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -167,6 +171,7 @@ async fn test_worker_job_retries_twice() {
         retry_attempts: 5, // Set higher than UntilAttempt value
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_secs(1),
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -215,6 +220,8 @@ async fn test_worker_job_respects_worker_config_retry_limit() {
         retry_attempts,
         retry_delay: Duration::from_millis(1),
         shutdown_timeout: Duration::from_secs(1),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -259,6 +266,8 @@ async fn test_worker_completes_job_during_shutdown() {
         retry_attempts: 1,
         retry_delay: Duration::from_millis(1),
         shutdown_timeout: Duration::from_secs(1),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -314,6 +323,8 @@ async fn test_worker_leaves_jobs_in_queue_on_shutdown() {
         retry_attempts: 1,
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_millis(100), // Short timeout
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -360,6 +371,8 @@ async fn test_worker_shutdown_during_job_retry_delay() {
         retry_attempts: 3,
         retry_delay: Duration::from_secs(1), // Long delay
         shutdown_timeout: Duration::from_millis(100),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -397,6 +410,8 @@ async fn test_worker_shutdown_with_empty_queue() {
         retry_attempts: 3,
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_millis(500),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -453,6 +468,8 @@ async fn test_worker_shutdown_signal_channel_closed() {
         retry_attempts: 3,
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_secs(3),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -508,6 +525,8 @@ async fn test_worker_graceful_shutdown_cancels_ongoing_job() {
         retry_attempts: 1,
         retry_delay: Duration::from_millis(5),
         shutdown_timeout: Duration::from_millis(50), // Short timeout to ensure job is cancelled
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -570,6 +589,8 @@ async fn test_worker_graceful_shutdown_completes_job() {
         retry_attempts: 1,
         retry_delay: Duration::from_millis(50),
         shutdown_timeout: Duration::from_millis(100),
+
+        metrics: Arc::new(NoopMetrics),
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);

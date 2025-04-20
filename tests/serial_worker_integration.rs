@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use queue_workers::{
     error::QueueWorkerError,
     job::Job,
+    metrics::NoopMetrics,
     queue::Queue,
     redis_queue::RedisQueue,
     worker::{Worker, WorkerConfig},
@@ -155,6 +156,8 @@ async fn test_complete_workflow() {
         retry_attempts: 2,
         retry_delay: Duration::from_millis(100),
         shutdown_timeout: Duration::from_secs(1),
+
+        metrics: Arc::new(NoopMetrics),
     };
     // Create a counter to track completed jobs
     let jobs_processed = Arc::new(AtomicBool::new(false));
@@ -220,6 +223,8 @@ async fn test_concurrent_workers() {
             retry_attempts: 1,
             retry_delay: Duration::from_millis(100),
             shutdown_timeout: Duration::from_secs(1),
+
+            metrics: Arc::new(NoopMetrics),
         };
 
         let cloned_queue = queue.clone();

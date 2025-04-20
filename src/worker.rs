@@ -1,13 +1,18 @@
+use crate::metrics::{Metrics, NoopMetrics};
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
 use log;
 use std::fmt::Display;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 pub struct WorkerConfig {
     pub retry_attempts: u32,
     pub retry_delay: Duration,
     pub shutdown_timeout: Duration,
+    pub metrics: Arc<dyn Metrics>,
 }
 
 impl Default for WorkerConfig {
@@ -16,6 +21,7 @@ impl Default for WorkerConfig {
             retry_attempts: 3,
             retry_delay: Duration::from_secs(5),
             shutdown_timeout: Duration::from_secs(30),
+            metrics: Arc::new(NoopMetrics),
         }
     }
 }
@@ -92,6 +98,9 @@ where
         log::debug!("Processing new job");
         match self.queue.pop().await {
             Ok(job) => {
+                self.config
+                    .metrics
+                    .increment_counter("job_executing", 1, &[]);
                 log::debug!("Picked up new job from queue");
                 let mut attempts: u32 = 0;
                 let mut result = job.execute().await;
@@ -105,6 +114,7 @@ where
                 }
 
                 if let Err(e) = result {
+                    self.config.metrics.increment_counter("job_failed", 1, &[]);
                     let error_msg = format!(
                         "Job failed after {} attempts: {}",
                         attempts.saturating_add(1),
@@ -112,6 +122,9 @@ where
                     );
                     return Err(QueueWorkerError::WorkerError(error_msg));
                 }
+                self.config
+                    .metrics
+                    .increment_counter("job_completed", 1, &[]);
                 Ok(())
             }
             Err(QueueWorkerError::JobNotFound(_)) => {
