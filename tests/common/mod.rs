@@ -88,6 +88,7 @@ impl std::fmt::Debug for TestJob {
 }
 
 impl TestJob {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             attempts: Arc::new(Mutex::new(0)),
@@ -103,31 +104,37 @@ impl TestJob {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.job_duration = duration;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_should_fail(mut self, should_fail: bool) -> Self {
         self.should_fail = should_fail;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_retry_conditions(mut self, conditions: RetryCondition) -> Self {
         self.retry_conditions = conditions;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_attempts(mut self, attempts: Arc<Mutex<u32>>) -> Self {
         self.attempts = attempts;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_completion_flag(mut self, completed: Arc<AtomicBool>) -> Self {
         self.completed = completed;
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_execution_tracker<F, Fut>(mut self, tracker: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -137,6 +144,7 @@ impl TestJob {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_concurrent_execution_tracker<F, Fut>(mut self, tracker: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
@@ -146,11 +154,13 @@ impl TestJob {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_before_retry_notifier(mut self, notifier: Arc<tokio::sync::Notify>) -> Self {
         self.before_retry_notifier = Some(notifier);
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_execution_complete_notifier(mut self, notifier: Arc<tokio::sync::Notify>) -> Self {
         self.execution_complete_notifier = Some(notifier);
         self
@@ -175,6 +185,7 @@ impl Default for TestJob {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum RetryCondition {
     Never,
     Always,
