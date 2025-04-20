@@ -4,8 +4,6 @@ use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-type WorkerShutdownSignal = tokio::sync::broadcast::Receiver<()>;
-
 pub struct WorkerConfig {
     pub retry_attempts: u32,
     pub retry_delay: Duration,
@@ -25,26 +23,29 @@ impl Default for WorkerConfig {
 pub struct Worker<Q: Queue> {
     queue: Q,
     config: WorkerConfig,
-    shutdown_signal: WorkerShutdownSignal,
+    // shutdown_signal: WorkerShutdownSignal,
     is_shutting_down: AtomicBool,
 }
 
 impl<Q> Worker<Q>
 where
     Q: Queue,
-    <Q::JobType as Job>::Error: Display,
+    <Q::JobType as Job>::Error: Display + Send,
+    <Q::JobType as Job>::Output: Send,
 {
-    pub fn new(queue: Q, config: WorkerConfig, shutdown_signal: WorkerShutdownSignal) -> Self {
+    pub fn new(queue: Q, config: WorkerConfig) -> Self {
         Self {
             queue,
             config,
-            shutdown_signal,
             is_shutting_down: AtomicBool::new(false),
         }
     }
 
-    pub async fn start(&self) -> Result<(), QueueWorkerError> {
-        let mut shutdown_rx = self.shutdown_signal.resubscribe();
+    pub async fn start(
+        &self,
+        shutdown: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), QueueWorkerError> {
+        let mut shutdown = Box::pin(shutdown);
 
         log::info!("Starting serial worker...");
         loop {
@@ -62,15 +63,8 @@ where
                     };
                     continue;
                 }
-                result = shutdown_rx.recv() => {
-                    match result {
-                        Ok(_r) => {
-                            log::info!("Shutdown signal received. Waiting for {:?}s for running jobs to complete...", self.config.shutdown_timeout);
-                        }
-                        Err(e) => {
-                            log::error!("Shutdown signal receiver errored: {e}");
-                        }
-                    };
+                _ = &mut shutdown => {
+                    log::info!("Shutdown signal received. Waiting for {:?}s for running jobs to complete...", self.config.shutdown_timeout);
                     self.is_shutting_down.store(true, Ordering::Relaxed);
                     tokio::select! {
                         _ = &mut job_result => {

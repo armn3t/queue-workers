@@ -94,11 +94,13 @@ async fn test_complete_workflow() {
         retry_delay: Duration::from_millis(100),
         shutdown_timeout: Duration::from_secs(1),
     };
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue.clone(), config, shutdown_rx);
+    let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue.clone(), config);
 
     tokio::select! {
-        _ = worker.start() => {},
+        _ = worker.start(async move {
+            let _ = shutdown_rx.recv().await;
+        }) => {},
         _ = sleep(Duration::from_secs(2)) => {},
     }
 
@@ -142,11 +144,18 @@ async fn test_concurrent_workers() {
 
         let cloned_queue = queue.clone();
         let handle = tokio::spawn(async move {
-            let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-            let worker = Worker::new(cloned_queue, config, shutdown_rx);
+            let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+            let worker = Worker::new(cloned_queue, config);
 
             tokio::select! {
-                _ = worker.start() => {},
+                _ = worker.start(async move {
+                    // Both receiving a value and channel closure are valid shutdown signals
+                    match shutdown_rx.recv().await {
+                        Ok(_) => {}, // Received shutdown signal
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {}, // Channel closed
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}, // Missed messages, but still continue with shutdown
+                    }
+                }) => {},
                 _ = sleep(Duration::from_secs(1)) => {
                     println!("Worker {} timed out", worker_id);
                 },
