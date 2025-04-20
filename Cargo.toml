@@ -1,6 +1,6 @@
 [package]
 name = "queue_workers"
-version = "0.3.5"
+version = "0.4.5"
 edition = "2024"
 license = "MIT"
 description = "A Redis-backed job queue system for Rust applications"
@@ -26,6 +26,10 @@ uuid = { version = "1.16.0", features = ["v4", "serde"] }
 [dev-dependencies]
 # Tracing dependencies for testing
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+    "fmt",
+    "json",
+] }
 tracing-test = "0.2"
 test-log = "0.2"
