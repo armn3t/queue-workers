@@ -28,13 +28,22 @@ async fn test_worker_job_suceeds_without_retries() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = tokio::time::sleep(Duration::from_millis(50)) => {},
-    }
+    // Spawn a task to send shutdown signal after job should be complete
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -61,13 +70,22 @@ async fn test_worker_job_retries_until_it_fails() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = tokio::time::sleep(Duration::from_millis(50)) => {},
-    }
+    // Spawn a task to send shutdown signal after job should be complete with retries
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -94,13 +112,22 @@ async fn test_worker_job_retries_once() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = tokio::time::sleep(Duration::from_millis(10)) => {},
-    }
+    // Spawn a task to send shutdown signal after job should be complete
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(final_attempts, 2, "Job should only be attempted twice");
@@ -124,14 +151,22 @@ async fn test_worker_job_retries_twice() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = async {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        } => {},
-    }
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
+
+    // Spawn a task to send shutdown signal after job should be complete
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -158,13 +193,22 @@ async fn test_worker_job_respects_worker_config_retry_limit() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = tokio::time::sleep(Duration::from_millis(10)) => {},
-    }
+    // Spawn a task to send shutdown signal after job should be complete
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -189,15 +233,25 @@ async fn test_worker_completes_job_during_shutdown() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
         shutdown_tx.send(()).unwrap();
     });
 
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            // Both receiving a value and channel closure are valid shutdown signals
+            match shutdown_rx.recv().await {
+                Ok(_) => {}                                                    // Received shutdown signal
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {}    // Channel closed
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {} // Missed messages, but still continue with shutdown
+            }
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -225,16 +279,22 @@ async fn test_worker_leaves_jobs_in_queue_on_shutdown() {
         shutdown_timeout: Duration::from_millis(100), // Short timeout
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue.clone(), config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue.clone(), config);
 
-    tokio::select! {
-        _ = worker.start() => {},
-        _ = async {
-            shutdown_tx.send(()).unwrap();
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        } => {},
-    }
+    // Spawn a task to send shutdown signal immediately
+    tokio::spawn(async move {
+        // Send shutdown signal immediately to test immediate shutdown
+        shutdown_tx.send(()).unwrap();
+    });
+
+    // Start the worker and wait for it to complete
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let remaining_jobs = queue.jobs.lock().await.len();
     assert!(
@@ -262,8 +322,8 @@ async fn test_worker_shutdown_during_job_retry_delay() {
         shutdown_timeout: Duration::from_millis(100),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     // Start the worker and signal shutdown during retry delay
     tokio::spawn(async move {
@@ -271,7 +331,12 @@ async fn test_worker_shutdown_during_job_retry_delay() {
         shutdown_tx.send(()).unwrap();
     });
 
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     assert_eq!(
@@ -292,8 +357,8 @@ async fn test_worker_shutdown_with_empty_queue() {
         shutdown_timeout: Duration::from_millis(500),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -301,7 +366,12 @@ async fn test_worker_shutdown_with_empty_queue() {
     });
 
     let start = std::time::Instant::now();
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
     let shutdown_duration = start.elapsed();
 
     assert!(
@@ -329,15 +399,20 @@ async fn test_worker_shutdown_signal_channel_closed() {
         shutdown_timeout: Duration::from_secs(3),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(500)).await;
         drop(shutdown_tx);
     });
 
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
 
     let final_attempts = *attempts.lock().await;
     let job_completed = completed.load(Ordering::Relaxed);
@@ -363,8 +438,8 @@ async fn test_worker_graceful_shutdown_cancels_ongoing_job() {
         shutdown_timeout: Duration::from_millis(50),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -372,7 +447,12 @@ async fn test_worker_graceful_shutdown_cancels_ongoing_job() {
     });
 
     let start = std::time::Instant::now();
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
     let shutdown_duration = start.elapsed();
 
     assert!(
@@ -406,8 +486,8 @@ async fn test_worker_graceful_shutdown_completes_job() {
         shutdown_timeout: Duration::from_millis(100),
     };
 
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
-    let worker = Worker::new(queue, config, shutdown_rx);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = Worker::new(queue, config);
 
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -415,7 +495,12 @@ async fn test_worker_graceful_shutdown_completes_job() {
     });
 
     let start = std::time::Instant::now();
-    worker.start().await.unwrap();
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
     let shutdown_duration = start.elapsed();
 
     assert!(
