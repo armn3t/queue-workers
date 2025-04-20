@@ -11,7 +11,11 @@ use common::{RetryCondition, TestJob, TestQueue};
 #[tokio::test]
 async fn test_concurrent_worker_job_succeeds_without_retries() {
     let attempts = Arc::new(Mutex::new(0));
-    let job = TestJob::new().with_attempts(attempts.clone());
+    let completion_notifier = Arc::new(tokio::sync::Notify::new());
+
+    let job = TestJob::new()
+        .with_attempts(attempts.clone())
+        .with_execution_complete_notifier(completion_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -27,9 +31,10 @@ async fn test_concurrent_worker_job_succeeds_without_retries() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Spawn a task to send shutdown signal after job should be complete
+    // Spawn a task to wait for job completion and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for the job to complete
+        completion_notifier.notified().await;
         shutdown_tx.send(()).unwrap();
     });
 
@@ -51,10 +56,13 @@ async fn test_concurrent_worker_job_succeeds_without_retries() {
 #[tokio::test]
 async fn test_concurrent_worker_job_retries_until_it_fails() {
     let attempts = Arc::new(Mutex::new(0));
+    let retry_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
         .with_should_fail(true)
-        .with_retry_conditions(RetryCondition::Always);
+        .with_retry_conditions(RetryCondition::Always)
+        .with_before_retry_notifier(retry_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -70,9 +78,12 @@ async fn test_concurrent_worker_job_retries_until_it_fails() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Spawn a task to send shutdown signal after job should be complete with retries
+    // Spawn a task to wait for all retries and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for 3 retries (4 total attempts)
+        for _ in 0..3 {
+            retry_notifier.notified().await;
+        }
         shutdown_tx.send(()).unwrap();
     });
 
@@ -94,10 +105,13 @@ async fn test_concurrent_worker_job_retries_until_it_fails() {
 #[tokio::test]
 async fn test_concurrent_worker_job_retries_once() {
     let attempts = Arc::new(Mutex::new(0));
+    let retry_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
         .with_should_fail(true)
-        .with_retry_conditions(RetryCondition::OnlyOnAttempt(1));
+        .with_retry_conditions(RetryCondition::OnlyOnAttempt(1))
+        .with_before_retry_notifier(retry_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -113,9 +127,10 @@ async fn test_concurrent_worker_job_retries_once() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Spawn a task to send shutdown signal after job should be complete
+    // Spawn a task to wait for the retry and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait for 1 retry
+        retry_notifier.notified().await;
         shutdown_tx.send(()).unwrap();
     });
 
@@ -134,10 +149,13 @@ async fn test_concurrent_worker_job_retries_once() {
 #[tokio::test]
 async fn test_concurrent_worker_job_retries_twice() {
     let attempts = Arc::new(Mutex::new(0));
+    let retry_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
         .with_should_fail(true)
-        .with_retry_conditions(RetryCondition::UntilAttempt(2));
+        .with_retry_conditions(RetryCondition::UntilAttempt(2))
+        .with_before_retry_notifier(retry_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -153,9 +171,12 @@ async fn test_concurrent_worker_job_retries_twice() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Spawn a task to send shutdown signal after job should be complete
+    // Spawn a task to wait for the retries and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Wait for 2 retries
+        for _ in 0..2 {
+            retry_notifier.notified().await;
+        }
         shutdown_tx.send(()).unwrap();
     });
 
@@ -177,10 +198,13 @@ async fn test_concurrent_worker_job_retries_twice() {
 #[tokio::test]
 async fn test_concurrent_worker_job_respects_worker_config_retry_limit() {
     let attempts = Arc::new(Mutex::new(0));
+    let retry_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
         .with_should_fail(true)
-        .with_retry_conditions(RetryCondition::Always);
+        .with_retry_conditions(RetryCondition::Always)
+        .with_before_retry_notifier(retry_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -196,9 +220,12 @@ async fn test_concurrent_worker_job_respects_worker_config_retry_limit() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Spawn a task to send shutdown signal after job should be complete
+    // Spawn a task to wait for the retries and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait for all retries (should be limited by config)
+        for _ in 0..retry_attempts {
+            retry_notifier.notified().await;
+        }
         shutdown_tx.send(()).unwrap();
     });
 
@@ -220,7 +247,8 @@ async fn test_concurrent_worker_job_respects_worker_config_retry_limit() {
 
 #[tokio::test]
 async fn test_concurrent_worker_completes_job_during_shutdown() {
-    let job = TestJob::new();
+    let completion_notifier = Arc::new(tokio::sync::Notify::new());
+    let job = TestJob::new().with_execution_complete_notifier(completion_notifier.clone());
     let attempts = job.attempts.clone();
 
     let queue = TestQueue {
@@ -237,8 +265,10 @@ async fn test_concurrent_worker_completes_job_during_shutdown() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
+    // Spawn a task to send shutdown signal after job starts but before it completes
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait for the job to start executing
+        tokio::time::sleep(Duration::from_millis(10)).await;
         shutdown_tx.send(()).unwrap();
     });
 
@@ -254,11 +284,18 @@ async fn test_concurrent_worker_completes_job_during_shutdown() {
         .await
         .unwrap();
 
-    let final_attempts = *attempts.lock().await;
-    assert_eq!(
-        final_attempts, 1,
+    // Wait for the completion notification to ensure the job actually completed
+    let completed =
+        tokio::time::timeout(Duration::from_millis(100), completion_notifier.notified())
+            .await
+            .is_ok();
+    assert!(
+        completed,
         "Job should have completed during shutdown grace period"
     );
+
+    let final_attempts = *attempts.lock().await;
+    assert_eq!(final_attempts, 1, "Job should have been attempted once");
 }
 
 #[tokio::test]
@@ -308,11 +345,14 @@ async fn test_concurrent_worker_leaves_jobs_in_queue_on_shutdown() {
 #[tokio::test]
 async fn test_concurrent_worker_shutdown_during_job_retry_delay() {
     let attempts = Arc::new(Mutex::new(0));
+    let before_retry_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
         .with_should_fail(true)
         .with_retry_conditions(RetryCondition::Always)
-        .with_duration(Duration::from_millis(50));
+        .with_duration(Duration::from_millis(50))
+        .with_before_retry_notifier(before_retry_notifier.clone());
 
     let queue = TestQueue {
         jobs: Arc::new(Mutex::new(vec![job])),
@@ -328,9 +368,11 @@ async fn test_concurrent_worker_shutdown_during_job_retry_delay() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
-    // Start the worker and signal shutdown during retry delay
+    // Spawn a task to wait for the job to fail and then send shutdown signal during retry delay
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for the job to fail and enter retry logic
+        before_retry_notifier.notified().await;
+        // Send shutdown signal during retry delay
         shutdown_tx.send(()).unwrap();
     });
 
@@ -388,14 +430,18 @@ async fn test_concurrent_worker_shutdown_with_empty_queue() {
 async fn test_concurrent_worker_shutdown_signal_channel_closed() {
     let attempts = Arc::new(Mutex::new(0));
     let completed = Arc::new(AtomicBool::new(false));
+    let execution_complete_notifier = Arc::new(tokio::sync::Notify::new());
+
     let job = TestJob::new()
         .with_attempts(attempts.clone())
-        .with_duration(Duration::from_secs(1))
-        .with_completion_flag(completed.clone());
+        .with_duration(Duration::from_millis(100)) // Shorter duration for faster test
+        .with_completion_flag(completed.clone())
+        .with_execution_complete_notifier(execution_complete_notifier.clone());
 
-    let queue = TestQueue {
-        jobs: Arc::new(Mutex::new(vec![job])),
-    };
+    let jobs = Arc::new(Mutex::new(vec![job]));
+    let started_execution = jobs.lock().await.get(0).unwrap().started_execution.clone();
+
+    let queue = TestQueue { jobs: jobs.clone() };
 
     let config = ConcurrentWorkerConfig {
         max_concurrent_jobs: 1, // Use 1 to make test deterministic
@@ -407,8 +453,12 @@ async fn test_concurrent_worker_shutdown_signal_channel_closed() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
+    // Spawn a task to wait for job to start and then drop the shutdown channel
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for the job to start executing
+        while !started_execution.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
         drop(shutdown_tx);
     });
 
@@ -418,6 +468,15 @@ async fn test_concurrent_worker_shutdown_signal_channel_closed() {
         })
         .await
         .unwrap();
+
+    // Wait for the completion notification to ensure the job actually completed
+    let completed_in_time = tokio::time::timeout(
+        Duration::from_millis(200),
+        execution_complete_notifier.notified(),
+    )
+    .await
+    .is_ok();
+    assert!(completed_in_time, "Job should have completed in time");
 
     let final_attempts = *attempts.lock().await;
     let job_completed = completed.load(Ordering::Relaxed);
@@ -429,8 +488,26 @@ async fn test_concurrent_worker_shutdown_signal_channel_closed() {
 #[tokio::test]
 async fn test_concurrent_worker_multiple_jobs() {
     let total_jobs = 10;
+    let completion_counter = Arc::new(AtomicUsize::new(0));
+
+    // Create jobs with completion notifiers
     let jobs = Arc::new(Mutex::new(
-        (0..total_jobs).map(|_| TestJob::new()).collect::<Vec<_>>(),
+        (0..total_jobs)
+            .map(|_| {
+                let counter = completion_counter.clone();
+                let completion_notifier = Arc::new(tokio::sync::Notify::new());
+
+                TestJob::new()
+                    .with_execution_complete_notifier(completion_notifier.clone())
+                    .with_execution_tracker(move || {
+                        let counter = counter.clone();
+                        async move {
+                            // Increment counter when job completes
+                            counter.fetch_add(1, Ordering::SeqCst);
+                        }
+                    })
+            })
+            .collect::<Vec<_>>(),
     ));
 
     let queue = TestQueue { jobs: jobs.clone() };
@@ -445,8 +522,15 @@ async fn test_concurrent_worker_multiple_jobs() {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = ConcurrentWorker::new(queue, config);
 
+    // Create a clone for the assertion at the end
+    let completion_counter_for_assert = completion_counter.clone();
+
+    // Spawn a task to wait for all jobs to complete and then send shutdown signal
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait until all jobs are processed
+        while completion_counter.load(Ordering::SeqCst) < total_jobs {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         shutdown_tx.send(()).unwrap();
     });
 
@@ -459,6 +543,11 @@ async fn test_concurrent_worker_multiple_jobs() {
 
     let remaining_jobs = jobs.lock().await.len();
     assert_eq!(remaining_jobs, 0, "All jobs should have been processed");
+    assert_eq!(
+        completion_counter_for_assert.load(Ordering::SeqCst),
+        total_jobs,
+        "All jobs should have completed"
+    );
 }
 
 #[tokio::test]

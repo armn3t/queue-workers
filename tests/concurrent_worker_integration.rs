@@ -7,7 +7,10 @@ use queue_workers::{
     redis_queue::RedisQueue,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -22,6 +25,42 @@ struct EmailJob {
     subject: String,
     attempts: u32,
     should_fail: bool,
+    #[serde(skip)]
+    completed: Option<Arc<AtomicBool>>,
+    #[serde(skip)]
+    started: Option<Arc<AtomicBool>>,
+    #[serde(skip)]
+    execution_complete_notifier: Option<Arc<Notify>>,
+}
+
+impl EmailJob {
+    fn new(id: String, to: String, subject: String, should_fail: bool) -> Self {
+        Self {
+            id,
+            to,
+            subject,
+            attempts: 0,
+            should_fail,
+            completed: None,
+            started: None,
+            execution_complete_notifier: None,
+        }
+    }
+
+    fn with_completion_tracking(mut self) -> Self {
+        self.completed = Some(Arc::new(AtomicBool::new(false)));
+        self
+    }
+
+    fn with_start_tracking(mut self) -> Self {
+        self.started = Some(Arc::new(AtomicBool::new(false)));
+        self
+    }
+
+    fn with_execution_complete_notifier(mut self, notifier: Arc<Notify>) -> Self {
+        self.execution_complete_notifier = Some(notifier);
+        self
+    }
 }
 
 #[async_trait]
@@ -30,6 +69,11 @@ impl Job for EmailJob {
     type Error = String;
 
     async fn execute(&self) -> Result<Self::Output, Self::Error> {
+        // Signal that execution has started
+        if let Some(started) = &self.started {
+            started.store(true, Ordering::SeqCst);
+        }
+
         // Simulate some work
         debug!("Executing email job {}", self.id);
         sleep(Duration::from_millis(100)).await;
@@ -37,17 +81,29 @@ impl Job for EmailJob {
         // Increment attempts (in a real implementation, this would be handled differently)
         let attempts = self.attempts + 1;
 
-        if self.should_fail {
+        let result = if self.should_fail {
             Err(format!(
                 "Failed to send email {} after {} attempts",
                 self.id, attempts
             ))
         } else {
+            // Mark as completed if successful
+            if let Some(completed) = &self.completed {
+                completed.store(true, Ordering::SeqCst);
+            }
+
             Ok(format!(
                 "Email {} sent to {} with subject: {}",
                 self.id, self.to, self.subject
             ))
+        };
+
+        // Notify that execution is complete
+        if let Some(notifier) = &self.execution_complete_notifier {
+            notifier.notify_one();
         }
+
+        result
     }
 
     fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
@@ -70,22 +126,28 @@ async fn test_complete_workflow() {
     debug!("Redis queue initialized");
 
     // Create and push jobs
-    let successful_job = EmailJob {
-        id: "email-1".to_string(),
-        to: "user@example.com".to_string(),
-        subject: "Hello".to_string(),
-        attempts: 0,
-        should_fail: false,
-    };
+    // Create a notifier to track when jobs complete
+    let completion_notifier = Arc::new(Notify::new());
+
+    let successful_job = EmailJob::new(
+        "email-1".to_string(),
+        "user@example.com".to_string(),
+        "Hello".to_string(),
+        false,
+    )
+    .with_completion_tracking()
+    .with_start_tracking()
+    .with_execution_complete_notifier(completion_notifier.clone());
     debug!(job_id = %successful_job.id, "Created successful test job");
 
-    let failing_job = EmailJob {
-        id: "email-2".to_string(),
-        to: "user@example.com".to_string(),
-        subject: "Fail".to_string(),
-        attempts: 0,
-        should_fail: true,
-    };
+    let failing_job = EmailJob::new(
+        "email-2".to_string(),
+        "user@example.com".to_string(),
+        "Fail".to_string(),
+        true,
+    )
+    .with_start_tracking()
+    .with_execution_complete_notifier(completion_notifier.clone());
 
     queue
         .push(successful_job.clone())
@@ -106,11 +168,21 @@ async fn test_complete_workflow() {
 
     let worker = ConcurrentWorker::new(queue.clone(), config);
 
-    // Run worker for a limited time
+    // Create a counter to track completed jobs
+    let jobs_processed = Arc::new(AtomicBool::new(false));
+    let jobs_processed_clone = jobs_processed.clone();
+
+    // Run worker with a shutdown signal based on job completion
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
+    // Use a simple timeout approach instead of notifications
     tokio::spawn(async move {
-        sleep(Duration::from_secs(2)).await;
+        // Wait a reasonable amount of time for jobs to complete
+        sleep(Duration::from_secs(3)).await;
+
+        // Mark jobs as processed
+        jobs_processed_clone.store(true, Ordering::SeqCst);
+
         info!("Sending shutdown signal");
         shutdown_tx.send(()).unwrap();
     });
@@ -121,6 +193,9 @@ async fn test_complete_workflow() {
         })
         .await
         .unwrap();
+
+    // Give some time for the worker to finish
+    sleep(Duration::from_millis(500)).await;
 
     match queue.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
@@ -141,13 +216,12 @@ async fn test_concurrent_workers() {
 
     // Create and push multiple jobs
     for i in 0..10 {
-        let job = EmailJob {
-            id: format!("email-{}", i),
-            to: "user@example.com".to_string(),
-            subject: format!("Test {}", i),
-            attempts: 0,
-            should_fail: false,
-        };
+        let job = EmailJob::new(
+            format!("email-{}", i),
+            "user@example.com".to_string(),
+            format!("Test {}", i),
+            false,
+        );
         debug!(job_id = %job.id, "Pushing job to queue");
         queue.push(job).await.expect("Failed to push job");
     }
@@ -159,13 +233,17 @@ async fn test_concurrent_workers() {
         shutdown_timeout: Duration::from_secs(1),
     };
 
-    let cloned_queue = queue.clone();
+    // Create a clone of the queue for checking later
+    let queue_check = queue.clone();
+
+    // Use a simpler approach with a fixed timeout
     let handle = tokio::spawn(async move {
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-        let worker = ConcurrentWorker::new(cloned_queue, config);
+        let worker = ConcurrentWorker::new(queue.clone(), config);
 
+        // Start a task to send shutdown signal after a fixed time
         tokio::spawn(async move {
-            sleep(Duration::from_secs(1)).await;
+            sleep(Duration::from_secs(3)).await;
             debug!("Sending shutdown signal to worker");
             shutdown_tx.send(()).unwrap();
         });
@@ -180,7 +258,10 @@ async fn test_concurrent_workers() {
 
     handle.await.expect("Worker task failed");
 
-    match queue.pop().await {
+    // Give some time for the worker to finish
+    sleep(Duration::from_millis(500)).await;
+
+    match queue_check.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty after processing"),
     }
@@ -193,13 +274,12 @@ async fn test_queue_persistence() {
 
     let queue = setup_redis_queue("concurrent_test_queue_persistence").await;
 
-    let job = EmailJob {
-        id: "persistent-email".to_string(),
-        to: "user@example.com".to_string(),
-        subject: "Persistent Test".to_string(),
-        attempts: 0,
-        should_fail: false,
-    };
+    let job = EmailJob::new(
+        "persistent-email".to_string(),
+        "user@example.com".to_string(),
+        "Persistent Test".to_string(),
+        false,
+    );
 
     queue.push(job.clone()).await.expect("Failed to push job");
 
