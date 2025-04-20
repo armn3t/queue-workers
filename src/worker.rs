@@ -1,12 +1,14 @@
 use crate::metrics::{Metrics, NoopMetrics};
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
 use log;
+use std::any::type_name;
 use std::fmt::Display;
+use std::future::Future;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct WorkerConfig {
     pub retry_attempts: u32,
@@ -53,6 +55,10 @@ where
         let mut shutdown = Box::pin(shutdown);
 
         log::info!("Starting serial worker...");
+        self.config
+            .metrics
+            .increment_counter("worker_start", 1, &[("worker_type", "serial")]);
+        let start_time = Instant::now();
         loop {
             let mut job_result = Box::pin(self.process_job());
 
@@ -79,6 +85,9 @@ where
                             log::info!("Shutdown timeout reached, forcing shutdown...");
                         }
                     }
+                    let uptime_secs = start_time.elapsed().as_secs();
+                    self.config.metrics.record_gauge("worker_uptime_seconds", uptime_secs as f64, &[("worker_type", "serial")]);
+                    self.config.metrics.increment_counter("worker_stop", 1, &[("worker_type", "serial")]);
                     break Ok(())
                 }
             }
@@ -96,25 +105,70 @@ where
             return Ok(());
         }
         log::debug!("Processing new job");
+
+        // Get job type for metrics labels
+        let job_type = type_name::<Q::JobType>();
+        let job_type_label = job_type.split(':').next_back().unwrap_or("unknown");
+        let base_labels = &[("job_type", job_type_label)];
+
         match self.queue.pop().await {
             Ok(job) => {
+                let queue_pop_time = Instant::now();
                 self.config
                     .metrics
-                    .increment_counter("job_executing", 1, &[]);
+                    .increment_counter("job_executing", 1, base_labels);
                 log::debug!("Picked up new job from queue");
+
+                // Record job execution start time
+                let start_time = Instant::now();
+                let queue_wait_ms = start_time.duration_since(queue_pop_time).as_millis() as u64;
+                self.config
+                    .metrics
+                    .record_timing("queue_wait_time", queue_wait_ms, base_labels);
+
                 let mut attempts: u32 = 0;
                 let mut result = job.execute().await;
+
                 while let Err(ref e) = result {
                     if attempts >= self.config.retry_attempts || !job.should_retry(e, attempts) {
                         break;
                     }
                     attempts = attempts.saturating_add(1);
+
+                    // Record retry metrics
+                    self.config
+                        .metrics
+                        .increment_counter("job_retry", 1, base_labels);
+                    self.config.metrics.record_gauge(
+                        "job_retry_count",
+                        attempts as f64,
+                        base_labels,
+                    );
+
                     tokio::time::sleep(self.config.retry_delay).await;
                     result = job.execute().await;
                 }
 
+                // Calculate total execution time
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
                 if let Err(e) = result {
-                    self.config.metrics.increment_counter("job_failed", 1, &[]);
+                    // Record failure metrics with status label
+                    let failure_labels = &[("job_type", job_type_label), ("status", "failed")];
+                    self.config
+                        .metrics
+                        .increment_counter("job_failed", 1, failure_labels);
+                    self.config.metrics.record_timing(
+                        "job_execution_time",
+                        execution_time_ms,
+                        failure_labels,
+                    );
+                    self.config.metrics.record_gauge(
+                        "job_retry_attempts",
+                        attempts as f64,
+                        failure_labels,
+                    );
+
                     let error_msg = format!(
                         "Job failed after {} attempts: {}",
                         attempts.saturating_add(1),
@@ -122,17 +176,44 @@ where
                     );
                     return Err(QueueWorkerError::WorkerError(error_msg));
                 }
+
+                // Record success metrics with status label
+                let success_labels = &[("job_type", job_type_label), ("status", "success")];
                 self.config
                     .metrics
-                    .increment_counter("job_completed", 1, &[]);
+                    .increment_counter("job_completed", 1, success_labels);
+                self.config.metrics.record_timing(
+                    "job_execution_time",
+                    execution_time_ms,
+                    success_labels,
+                );
+                if attempts > 0 {
+                    self.config.metrics.record_gauge(
+                        "job_retry_attempts",
+                        attempts as f64,
+                        success_labels,
+                    );
+                }
+
                 Ok(())
             }
             Err(QueueWorkerError::JobNotFound(_)) => {
+                // Record empty queue metric
+                self.config
+                    .metrics
+                    .increment_counter("queue_empty", 1, base_labels);
+
                 // Backpressure for empty queue
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                // Record queue error metric
+                self.config
+                    .metrics
+                    .increment_counter("queue_error", 1, base_labels);
+                Err(e)
+            }
         }
     }
 }
