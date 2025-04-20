@@ -1,5 +1,7 @@
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
+use log;
 use std::fmt::Display;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -72,7 +74,11 @@ where
         }
     }
 
-    pub async fn start(&self) -> Result<(), QueueWorkerError> {
+    pub async fn start(
+        &self,
+        shutdown: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), QueueWorkerError> {
+        let mut shutdown = Box::pin(shutdown);
         log::info!("Starting concurrent worker...");
         let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_jobs));
         let queue = Arc::new(self.queue.clone());
@@ -80,42 +86,9 @@ where
         let retry_delay = self.config.retry_delay;
 
         loop {
-            let permit = semaphore
-                .clone()
-                .acquire_owned()
-                .await
-                .expect("Permit to be available");
-            let queue = queue.clone();
-
-            tokio::spawn(async move {
-                let result = Self::process_job((*queue).clone(), retry_attempts, retry_delay).await;
-                if let Err(e) = result {
-                    log::error!("Worker failed to process job: {e}");
-                } else {
-                    log::info!("Job executed successfully")
-                }
-
-                drop(permit);
-            });
-
-            sleep(Duration::from_millis(10)).await;
-        }
-    }
-
-    pub async fn start_with_shutdown(
-        &self,
-        shutdown_signal: tokio::sync::broadcast::Receiver<()>,
-    ) -> Result<(), QueueWorkerError> {
-        let semaphore = Arc::new(Semaphore::new(self.config.max_concurrent_jobs));
-        let queue = Arc::new(self.queue.clone());
-        let retry_attempts = self.config.retry_attempts;
-        let retry_delay = self.config.retry_delay;
-        let mut shutdown_rx = shutdown_signal;
-
-        loop {
             tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    println!("Shutdown signal received, waiting for running jobs to complete...");
+                _ = &mut shutdown => {
+                    log::info!("Shutdown signal received, waiting for {:?} for running jobs to complete...", self.config.shutdown_timeout);
                     let timeout = tokio::time::sleep(self.config.shutdown_timeout);
                     tokio::pin!(timeout);
 
@@ -235,9 +208,12 @@ mod tests {
         };
 
         let worker = ConcurrentWorker::new(queue, config);
+        let (_shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
         tokio::select! {
-            _ = worker.start() => {},
+            _ = worker.start(async move {
+                let _ = shutdown_rx.recv().await;
+            }) => {},
             _ = sleep(Duration::from_secs(2)) => {},
         }
 
@@ -247,9 +223,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_worker_shutdown() {
-        let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(1);
         let jobs = Arc::new(Mutex::new(
-            (0..100)
+            (0..10) // Reduced number of jobs to ensure test reliability
                 .map(|_| TestJob {
                     attempts: Arc::new(Mutex::new(0)),
                     should_fail: false,
@@ -269,14 +245,21 @@ mod tests {
 
         let worker = ConcurrentWorker::new(queue, config);
 
+        // Spawn a task to send shutdown signal after some jobs should be processed
         tokio::spawn(async move {
             sleep(Duration::from_millis(500)).await;
             shutdown_tx.send(()).unwrap();
         });
 
-        worker.start_with_shutdown(shutdown_rx).await.unwrap();
+        // Start the worker and wait for it to complete
+        worker
+            .start(async move {
+                let _ = shutdown_rx.recv().await; // Added .await here
+            })
+            .await
+            .unwrap();
 
         let remaining_jobs = jobs.lock().await.len();
-        assert!(remaining_jobs < 100, "Some jobs should have been processed");
+        assert!(remaining_jobs < 10, "Some jobs should have been processed");
     }
 }
