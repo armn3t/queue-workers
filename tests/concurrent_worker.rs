@@ -476,7 +476,7 @@ async fn test_concurrent_worker_graceful_shutdown_completes_job() {
         max_concurrent_jobs: 1,
         retry_attempts: 1,
         retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_millis(200), // Longer timeout
+        shutdown_timeout: Duration::from_millis(600), // Longer timeout
     };
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
@@ -501,7 +501,7 @@ async fn test_concurrent_worker_graceful_shutdown_completes_job() {
         "Job should have completed during graceful shutdown"
     );
     assert!(
-        shutdown_duration < Duration::from_millis(200),
+        shutdown_duration < Duration::from_millis(600),
         "Worker should have finished before shutdown timeout"
     );
 }

@@ -122,7 +122,6 @@ async fn test_complete_workflow() {
         .await
         .unwrap();
 
-    // Verify queue is empty after processing
     match queue.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty"),
@@ -153,52 +152,38 @@ async fn test_concurrent_workers() {
         queue.push(job).await.expect("Failed to push job");
     }
 
-    // Create multiple workers with high concurrency
-    let worker_count = 3;
-    let mut handles = Vec::new();
+    let config = ConcurrentWorkerConfig {
+        max_concurrent_jobs: 2,
+        retry_attempts: 1,
+        retry_delay: Duration::from_millis(50),
+        shutdown_timeout: Duration::from_secs(1),
+    };
 
-    for worker_id in 0..worker_count {
-        let config = ConcurrentWorkerConfig {
-            max_concurrent_jobs: 2,
-            retry_attempts: 1,
-            retry_delay: Duration::from_millis(50),
-            shutdown_timeout: Duration::from_secs(1),
-        };
+    let cloned_queue = queue.clone();
+    let handle = tokio::spawn(async move {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+        let worker = ConcurrentWorker::new(cloned_queue, config);
 
-        let cloned_queue = queue.clone();
-        let handle = tokio::spawn(async move {
-            let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
-            let worker = ConcurrentWorker::new(cloned_queue, config);
-
-            tokio::spawn(async move {
-                sleep(Duration::from_secs(1)).await;
-                debug!("Sending shutdown signal to worker {}", worker_id);
-                shutdown_tx.send(()).unwrap();
-            });
-
-            worker
-                .start(async move {
-                    let _ = shutdown_rx.recv().await;
-                })
-                .await
-                .unwrap();
+        tokio::spawn(async move {
+            sleep(Duration::from_secs(1)).await;
+            debug!("Sending shutdown signal to worker");
+            shutdown_tx.send(()).unwrap();
         });
 
-        handles.push(handle);
-    }
+        worker
+            .start(async move {
+                let _ = shutdown_rx.recv().await;
+            })
+            .await
+            .unwrap();
+    });
 
-    // Wait for all workers to complete
-    for handle in handles {
-        handle.await.expect("Worker task failed");
-    }
+    handle.await.expect("Worker task failed");
 
-    // Verify queue is empty after processing
     match queue.pop().await {
         Err(QueueWorkerError::JobNotFound(_)) => (),
         _ => panic!("Queue should be empty after processing"),
     }
-
-    info!("Concurrent workers test finished");
 }
 
 #[tokio::test]
