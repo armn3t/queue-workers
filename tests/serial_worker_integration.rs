@@ -161,12 +161,11 @@ async fn test_complete_workflow() {
         .await
         .expect("Failed to push failing job");
 
-    let config = WorkerConfig {
-        retry_attempts: 2,
-        retry_delay: Duration::from_millis(100),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 2;
+    config.retry_delay = Duration::from_millis(100);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
     // Create a counter to track completed jobs
     let jobs_processed = Arc::new(AtomicBool::new(false));
     let jobs_processed_clone = jobs_processed.clone();
@@ -227,12 +226,11 @@ async fn test_concurrent_workers() {
     let mut handles = Vec::new();
 
     for worker_id in 0..worker_count {
-        let config = WorkerConfig {
-            retry_attempts: 1,
-            retry_delay: Duration::from_millis(100),
-            shutdown_timeout: Duration::from_secs(1),
-            metrics: Arc::new(NoopMetrics),
-        };
+        let mut config = WorkerConfig::default();
+        config.retry_attempts = 1;
+        config.retry_delay = Duration::from_millis(100);
+        config.shutdown_timeout = Duration::from_secs(1);
+        config.metrics = Arc::new(NoopMetrics);
 
         let cloned_queue = queue.clone();
         let handle = tokio::spawn(async move {
@@ -316,12 +314,11 @@ async fn test_custom_job_type() {
     queue.push(job).await.expect("Failed to push job");
 
     // Create a worker to process the job
-    let config = WorkerConfig {
-        retry_attempts: 0,
-        retry_delay: Duration::from_millis(10),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 0;
+    config.retry_delay = Duration::from_millis(10);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue.clone(), config);

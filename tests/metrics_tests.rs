@@ -183,12 +183,12 @@ async fn test_worker_lifecycle_metrics() {
     let jobs = Arc::new(Mutex::new(vec![job]));
 
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
-    let config = WorkerConfig {
-        retry_attempts: 0,
-        retry_delay: Duration::from_millis(10),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: metrics.clone(),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 0;
+    config.retry_delay = Duration::from_millis(10);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = metrics.clone();
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let worker = Worker::new(queue, config);
 
@@ -233,12 +233,12 @@ async fn test_job_execution_metrics() {
     let jobs = Arc::new(Mutex::new(vec![job]));
 
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
-    let config = WorkerConfig {
-        retry_attempts: 0,
-        retry_delay: Duration::from_millis(10),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: metrics.clone(),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 0;
+    config.retry_delay = Duration::from_millis(10);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = metrics.clone();
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let worker = Worker::new(queue, config);
 
@@ -302,12 +302,12 @@ async fn test_job_retry_metrics() {
     let jobs = Arc::new(Mutex::new(vec![job]));
 
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
-    let config = WorkerConfig {
-        retry_attempts: 2,
-        retry_delay: Duration::from_millis(10),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: metrics.clone(),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 2;
+    config.retry_delay = Duration::from_millis(10);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = metrics.clone();
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let worker = Worker::new(queue, config);
 
@@ -347,12 +347,12 @@ async fn test_empty_queue_metrics() {
     let jobs = Arc::new(Mutex::new(vec![]));
 
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
-    let config = WorkerConfig {
-        retry_attempts: 0,
-        retry_delay: Duration::from_millis(10),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: metrics.clone(),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 0;
+    config.retry_delay = Duration::from_millis(10);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = metrics.clone();
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let worker = Worker::new(queue, config);
 

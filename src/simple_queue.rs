@@ -5,6 +5,7 @@ use std::time::Duration;
 use crate::{
     error::QueueWorkerError,
     job::{Job, JobWrapper},
+    metrics::Metrics,
     queue::{Queue, QueueType},
 };
 
@@ -14,10 +15,32 @@ pub struct SimpleQueue<J> {
     client: Client,
     queue_name: String,
     queue_type: QueueType,
+    metrics: Option<std::sync::Arc<dyn Metrics>>,
     _phantom: std::marker::PhantomData<J>,
 }
 
 impl<J> SimpleQueue<J> {
+    /// Set metrics collector for this queue
+    pub fn with_metrics(mut self, metrics: std::sync::Arc<dyn Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Get the current queue depth (number of jobs waiting)
+    pub async fn get_depth(&self) -> Result<u64, QueueWorkerError> {
+        let mut conn = self.get_connection().await?;
+        let len: u64 = conn
+            .llen(&self.queue_name)
+            .await
+            .map_err(QueueWorkerError::RedisError)?;
+
+        // Record the queue depth metric if metrics are configured
+        if let Some(metrics) = &self.metrics {
+            metrics.record_queue_depth(&self.queue_name, len, &[]);
+        }
+
+        Ok(len)
+    }
     /// Create a new SimpleQueue with the default queue type (FIFO).
     pub fn new(redis_url: &str, queue_name: &str) -> Result<Self, QueueWorkerError> {
         Self::with_type(redis_url, queue_name, QueueType::default())
@@ -47,6 +70,7 @@ impl<J> SimpleQueue<J> {
             client,
             queue_name: queue_name.to_string(),
             queue_type,
+            metrics: None,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -72,6 +96,7 @@ impl<J> Clone for SimpleQueue<J> {
             client: self.client.clone(),
             queue_name: self.queue_name.clone(),
             queue_type: self.queue_type,
+            metrics: self.metrics.clone(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -84,8 +109,15 @@ where
 {
     type JobType = J;
 
+    fn queue_name(&self) -> &str {
+        &self.queue_name
+    }
+
     async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
         let mut conn = self.get_connection().await?;
+
+        // Get the job type for metrics
+        let job_type = job.job_type();
 
         // Create a wrapper that includes the job type
         let wrapper = JobWrapper::new(job);
@@ -97,6 +129,16 @@ where
         conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
             .map_err(QueueWorkerError::RedisError)?;
+
+        // Record metrics if configured
+        if let Some(metrics) = &self.metrics {
+            metrics.record_job_enqueued(job_type, &self.queue_name);
+
+            // Update queue depth after push
+            if let Ok(depth) = conn.llen::<&String, u64>(&self.queue_name).await {
+                metrics.record_queue_depth(&self.queue_name, depth, &[]);
+            }
+        }
 
         Ok(())
     }
@@ -123,7 +165,20 @@ where
         let wrapper: JobWrapper<J> =
             serde_json::from_str(&job_data).map_err(QueueWorkerError::SerializationError)?;
 
+        // Get the job for return
+        let job = wrapper.into_job_data();
+
+        // Record metrics if configured
+        if let Some(metrics) = &self.metrics {
+            metrics.record_job_dequeued(job.job_type(), &self.queue_name);
+
+            // Update queue depth after pop
+            if let Ok(depth) = conn.llen::<&String, u64>(&self.queue_name).await {
+                metrics.record_queue_depth(&self.queue_name, depth, &[]);
+            }
+        }
+
         // Return the job data
-        Ok(wrapper.into_job_data())
+        Ok(job)
     }
 }

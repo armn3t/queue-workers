@@ -27,12 +27,12 @@ async fn test_worker_job_suceeds_without_retries() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -74,12 +74,12 @@ async fn test_worker_job_retries_until_it_fails() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_millis(1),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_millis(1);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -123,12 +123,12 @@ async fn test_worker_job_retries_once() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_millis(1),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_millis(1);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -167,12 +167,12 @@ async fn test_worker_job_retries_twice() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 5, // Set higher than UntilAttempt value
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_secs(1),
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 5; // Set higher than UntilAttempt value
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -216,13 +216,12 @@ async fn test_worker_job_respects_worker_config_retry_limit() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
     let retry_attempts = 2;
-    let config = WorkerConfig {
-        retry_attempts,
-        retry_delay: Duration::from_millis(1),
-        shutdown_timeout: Duration::from_secs(1),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = retry_attempts;
+    config.retry_delay = Duration::from_millis(1);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -262,13 +261,12 @@ async fn test_worker_completes_job_during_shutdown() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 1,
-        retry_delay: Duration::from_millis(1),
-        shutdown_timeout: Duration::from_secs(1),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 1;
+    config.retry_delay = Duration::from_millis(1);
+    config.shutdown_timeout = Duration::from_secs(1);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -319,13 +317,12 @@ async fn test_worker_leaves_jobs_in_queue_on_shutdown() {
         jobs: Arc::new(Mutex::new(jobs)),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 1,
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_millis(100), // Short timeout
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 1;
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_millis(100); // Short timeout
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue.clone(), config);
@@ -367,13 +364,12 @@ async fn test_worker_shutdown_during_job_retry_delay() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_secs(1), // Long delay
-        shutdown_timeout: Duration::from_millis(100),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_secs(1); // Long delay
+    config.shutdown_timeout = Duration::from_millis(100);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -406,13 +402,12 @@ async fn test_worker_shutdown_with_empty_queue() {
         jobs: Arc::new(Mutex::new(vec![])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_millis(500),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_millis(500);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -464,13 +459,12 @@ async fn test_worker_shutdown_signal_channel_closed() {
 
     let queue = TestQueue { jobs: jobs.clone() };
 
-    let config = WorkerConfig {
-        retry_attempts: 3,
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_secs(3),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 3;
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_secs(3);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -521,13 +515,12 @@ async fn test_worker_graceful_shutdown_cancels_ongoing_job() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 1,
-        retry_delay: Duration::from_millis(5),
-        shutdown_timeout: Duration::from_millis(50), // Short timeout to ensure job is cancelled
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 1;
+    config.retry_delay = Duration::from_millis(5);
+    config.shutdown_timeout = Duration::from_millis(50); // Short timeout to ensure job is cancelled
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);
@@ -585,13 +578,12 @@ async fn test_worker_graceful_shutdown_completes_job() {
         jobs: Arc::new(Mutex::new(vec![job])),
     };
 
-    let config = WorkerConfig {
-        retry_attempts: 1,
-        retry_delay: Duration::from_millis(50),
-        shutdown_timeout: Duration::from_millis(100),
-
-        metrics: Arc::new(NoopMetrics),
-    };
+    let mut config = WorkerConfig::default();
+    config.retry_attempts = 1;
+    config.retry_delay = Duration::from_millis(50);
+    config.shutdown_timeout = Duration::from_millis(100);
+    config.metrics = Arc::new(NoopMetrics);
+    config.queue_depth_check_interval_ms = Some(0); // Disable queue depth monitoring for tests
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
     let worker = Worker::new(queue, config);

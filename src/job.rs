@@ -19,14 +19,27 @@ pub trait Job: Send + Sync {
     }
 }
 
-/// A wrapper struct for jobs that includes the job type.
-/// This is used for serialization/deserialization to ensure the job type is preserved.
+/// A wrapper struct for jobs that includes the job type and enqueue time.
+/// This is used for serialization/deserialization to ensure the job type is preserved
+/// and to track how long jobs spend in the queue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobWrapper<J> {
     /// The job type identifier
     pub job_type: String,
     /// The serialized job data
     pub job_data: J,
+    /// When the job was enqueued (UTC timestamp in milliseconds)
+    #[serde(default = "current_time_millis")]
+    pub enqueued_at: u64,
+}
+
+/// Get current time in milliseconds since UNIX epoch
+pub fn current_time_millis() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl<J> JobWrapper<J>
@@ -38,6 +51,7 @@ where
         Self {
             job_type: job.job_type().to_string(),
             job_data: job,
+            enqueued_at: current_time_millis(),
         }
     }
 
@@ -54,6 +68,16 @@ where
     /// Unwrap the job wrapper and return the job data
     pub fn into_job_data(self) -> J {
         self.job_data
+    }
+
+    /// Get the time the job was enqueued
+    pub fn enqueued_at(&self) -> u64 {
+        self.enqueued_at
+    }
+
+    /// Calculate how long the job has been in the queue (in milliseconds)
+    pub fn queue_time_ms(&self) -> u64 {
+        current_time_millis().saturating_sub(self.enqueued_at)
     }
 }
 

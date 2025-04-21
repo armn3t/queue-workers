@@ -21,4 +21,9 @@ pub trait Queue: Send + Sync {
     async fn push(&self, job: Self::JobType) -> Result<(), error::QueueWorkerError>;
 
     async fn pop(&self) -> Result<Self::JobType, error::QueueWorkerError>;
+
+    /// Get the name of the queue
+    fn queue_name(&self) -> &str {
+        "default"
+    }
 }
