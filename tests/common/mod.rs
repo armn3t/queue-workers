@@ -198,6 +198,10 @@ impl Job for TestJob {
     type Output = ();
     type Error = String;
 
+    fn job_type(&self) -> &'static str {
+        "TestJob"
+    }
+
     async fn execute(&self) -> Result<Self::Output, Self::Error> {
         self.started_execution.store(true, Ordering::SeqCst);
 
