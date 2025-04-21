@@ -1,7 +1,7 @@
 use crate::metrics::{Metrics, NoopMetrics};
 use crate::{error::QueueWorkerError, job::Job, queue::Queue};
 use log;
-use std::any::type_name;
+
 use std::fmt::Display;
 use std::future::Future;
 use std::sync::{
@@ -106,13 +106,13 @@ where
         }
         log::debug!("Processing new job");
 
-        // Get job type for metrics labels
-        let job_type = type_name::<Q::JobType>();
-        let job_type_label = job_type.split(':').next_back().unwrap_or("unknown");
-        let base_labels = &[("job_type", job_type_label)];
+        let base_labels = &[];
 
         match self.queue.pop().await {
             Ok(job) => {
+                let job_type_label = job.job_type();
+                let base_labels = &[("job_type", job_type_label)];
+
                 let queue_pop_time = Instant::now();
                 self.config
                     .metrics

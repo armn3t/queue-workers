@@ -1,26 +1,29 @@
 use async_trait::async_trait;
 use redis::{AsyncCommands, Client, aio::MultiplexedConnection};
-
 use std::time::Duration;
 
 use crate::{
     error::QueueWorkerError,
+    job::{Job, JobWrapper},
     queue::{Queue, QueueType},
-    redis_job::{RedisJob, RedisJobWrapper},
 };
 
-pub struct RedisQueue<J> {
+/// A simple queue implementation using Redis.
+/// This queue serializes jobs to JSON and stores them in Redis.
+pub struct SimpleQueue<J> {
     client: Client,
     queue_name: String,
     queue_type: QueueType,
     _phantom: std::marker::PhantomData<J>,
 }
 
-impl<J> RedisQueue<J> {
+impl<J> SimpleQueue<J> {
+    /// Create a new SimpleQueue with the default queue type (FIFO).
     pub fn new(redis_url: &str, queue_name: &str) -> Result<Self, QueueWorkerError> {
         Self::with_type(redis_url, queue_name, QueueType::default())
     }
 
+    /// Create a new SimpleQueue with a specific queue type.
     pub fn with_type(
         redis_url: &str,
         queue_name: &str,
@@ -63,7 +66,7 @@ impl<J> RedisQueue<J> {
     }
 }
 
-impl<J> Clone for RedisQueue<J> {
+impl<J> Clone for SimpleQueue<J> {
     fn clone(&self) -> Self {
         Self {
             client: self.client.clone(),
@@ -75,9 +78,9 @@ impl<J> Clone for RedisQueue<J> {
 }
 
 #[async_trait]
-impl<J> Queue for RedisQueue<J>
+impl<J> Queue for SimpleQueue<J>
 where
-    J: RedisJob + Send + Sync,
+    J: Job + serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync,
 {
     type JobType = J;
 
@@ -85,10 +88,11 @@ where
         let mut conn = self.get_connection().await?;
 
         // Create a wrapper that includes the job type
-        let wrapper = RedisJobWrapper::new(job);
+        let wrapper = JobWrapper::new(job);
 
         // Serialize the wrapper
-        let job_data = serde_json::to_string(&wrapper).map_err(QueueWorkerError::SerializationError)?;
+        let job_data =
+            serde_json::to_string(&wrapper).map_err(QueueWorkerError::SerializationError)?;
 
         conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
@@ -116,10 +120,10 @@ where
         })?;
 
         // Deserialize the wrapper first
-        let wrapper: RedisJobWrapper<J> = serde_json::from_str(&job_data)
-            .map_err(QueueWorkerError::SerializationError)?;
+        let wrapper: JobWrapper<J> =
+            serde_json::from_str(&job_data).map_err(QueueWorkerError::SerializationError)?;
 
         // Return the job data
-        Ok(wrapper.job_data)
+        Ok(wrapper.into_job_data())
     }
 }

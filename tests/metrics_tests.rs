@@ -177,14 +177,11 @@ impl Queue for TestQueueForMetrics {
 
 #[tokio::test]
 async fn test_worker_lifecycle_metrics() {
-    // Create a fake metrics collector
     let metrics = Arc::new(FakeMetricsCollector::new());
 
-    // Create a test job
     let job = TestJob::new().with_duration(Duration::from_millis(50));
     let jobs = Arc::new(Mutex::new(vec![job]));
 
-    // Create a queue and worker
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
     let config = WorkerConfig {
         retry_attempts: 0,
@@ -195,11 +192,9 @@ async fn test_worker_lifecycle_metrics() {
 
     let worker = Worker::new(queue, config);
 
-    // Create a shutdown signal
     let shutdown_notify = Arc::new(Notify::new());
     let shutdown_notify_clone = shutdown_notify.clone();
 
-    // Run the worker in a separate task
     let worker_handle = tokio::spawn(async move {
         worker
             .start(async move {
@@ -209,25 +204,19 @@ async fn test_worker_lifecycle_metrics() {
             .unwrap();
     });
 
-    // Wait a bit for the worker to start and process the job
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send shutdown signal
     shutdown_notify.notify_one();
 
-    // Wait for worker to shut down
     worker_handle.await.unwrap();
 
-    // Verify metrics
-    assert!(
-        metrics
-            .get_counter_value("worker_start", &[("worker_type", "serial")])
-            .is_some()
+    assert_eq!(
+        metrics.get_counter_value("worker_start", &[("worker_type", "serial")]),
+        Some(1)
     );
-    assert!(
-        metrics
-            .get_counter_value("worker_stop", &[("worker_type", "serial")])
-            .is_some()
+    assert_eq!(
+        metrics.get_counter_value("worker_stop", &[("worker_type", "serial")]),
+        Some(1)
     );
     assert!(
         metrics
@@ -238,14 +227,11 @@ async fn test_worker_lifecycle_metrics() {
 
 #[tokio::test]
 async fn test_job_execution_metrics() {
-    // Create a fake metrics collector
     let metrics = Arc::new(FakeMetricsCollector::new());
 
-    // Create a test job
     let job = TestJob::new().with_duration(Duration::from_millis(50));
     let jobs = Arc::new(Mutex::new(vec![job]));
 
-    // Create a queue and worker
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
     let config = WorkerConfig {
         retry_attempts: 0,
@@ -256,11 +242,9 @@ async fn test_job_execution_metrics() {
 
     let worker = Worker::new(queue, config);
 
-    // Create a shutdown signal
     let shutdown_notify = Arc::new(Notify::new());
     let shutdown_notify_clone = shutdown_notify.clone();
 
-    // Run the worker in a separate task
     let worker_handle = tokio::spawn(async move {
         worker
             .start(async move {
@@ -270,16 +254,12 @@ async fn test_job_execution_metrics() {
             .unwrap();
     });
 
-    // Wait a bit for the worker to start and process the job
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send shutdown signal
     shutdown_notify.notify_one();
 
-    // Wait for worker to shut down
     worker_handle.await.unwrap();
 
-    // Verify metrics
     let job_type_label = "TestJob";
     assert!(
         metrics
@@ -311,10 +291,8 @@ async fn test_job_execution_metrics() {
 
 #[tokio::test]
 async fn test_job_retry_metrics() {
-    // Create a fake metrics collector
     let metrics = Arc::new(FakeMetricsCollector::new());
 
-    // Create a test job that fails once then succeeds
     let completed = Arc::new(AtomicBool::new(false));
     let job = TestJob::new()
         .with_duration(Duration::from_millis(10))
@@ -323,7 +301,6 @@ async fn test_job_retry_metrics() {
 
     let jobs = Arc::new(Mutex::new(vec![job]));
 
-    // Create a queue and worker
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
     let config = WorkerConfig {
         retry_attempts: 2,
@@ -334,11 +311,9 @@ async fn test_job_retry_metrics() {
 
     let worker = Worker::new(queue, config);
 
-    // Create a shutdown signal
     let shutdown_notify = Arc::new(Notify::new());
     let shutdown_notify_clone = shutdown_notify.clone();
 
-    // Run the worker in a separate task
     let worker_handle = tokio::spawn(async move {
         worker
             .start(async move {
@@ -348,16 +323,12 @@ async fn test_job_retry_metrics() {
             .unwrap();
     });
 
-    // Wait a bit for the worker to start and process the job
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send shutdown signal
     shutdown_notify.notify_one();
 
-    // Wait for worker to shut down
     worker_handle.await.unwrap();
 
-    // Verify metrics
     let job_type_label = "TestJob";
     assert!(
         metrics
@@ -371,13 +342,10 @@ async fn test_job_retry_metrics() {
 
 #[tokio::test]
 async fn test_empty_queue_metrics() {
-    // Create a fake metrics collector
     let metrics = Arc::new(FakeMetricsCollector::new());
 
-    // Create an empty queue
     let jobs = Arc::new(Mutex::new(vec![]));
 
-    // Create a queue and worker
     let queue = TestQueueForMetrics { jobs: jobs.clone() };
     let config = WorkerConfig {
         retry_attempts: 0,
@@ -388,33 +356,26 @@ async fn test_empty_queue_metrics() {
 
     let worker = Worker::new(queue, config);
 
-    // Create a shutdown signal with a timeout
     let shutdown_notify = Arc::new(Notify::new());
     let shutdown_notify_clone = shutdown_notify.clone();
 
-    // Run the worker in a separate task with a timeout
     let worker_handle = tokio::spawn(async move {
         let worker_future = worker.start(async move {
             shutdown_notify_clone.notified().await;
         });
 
-        // Add a timeout to the worker future
         tokio::select! {
             result = worker_future => result.unwrap(),
             _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                // If we timeout, just return
                 println!("Worker future timed out, but that's expected");
             }
         }
     });
 
-    // Wait a bit for the worker to try to process jobs (shorter wait)
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Send shutdown signal
     shutdown_notify.notify_one();
 
-    // Wait for worker to shut down with a timeout
     tokio::select! {
         _ = worker_handle => {},
         _ = tokio::time::sleep(Duration::from_millis(300)) => {
@@ -422,8 +383,6 @@ async fn test_empty_queue_metrics() {
         }
     }
 
-    // Verify metrics - we expect at least one queue_empty metric
-    // but we won't fail the test if it's not there, as it might be timing-dependent
     let job_type_label = "TestJob";
     let has_queue_empty = metrics
         .get_counter_value("queue_empty", &[("job_type", job_type_label)])
@@ -433,13 +392,10 @@ async fn test_empty_queue_metrics() {
 
 #[tokio::test]
 async fn test_queue_error_metrics() {
-    // Create a fake metrics collector
     let metrics = Arc::new(FakeMetricsCollector::new());
 
-    // Manually record a queue error metric
     metrics.increment_counter("queue_error", 1, &[("job_type", "TestJob")]);
 
-    // Verify metrics
     let job_type_label = "TestJob";
     let has_queue_error = metrics
         .get_counter_value("queue_error", &[("job_type", job_type_label)])
@@ -450,7 +406,6 @@ async fn test_queue_error_metrics() {
         "Expected queue_error metric to be recorded"
     );
 
-    // Verify the value is correct
     let error_count = metrics
         .get_counter_value("queue_error", &[("job_type", job_type_label)])
         .unwrap();

@@ -7,10 +7,53 @@ pub trait Job: Send + Sync {
     type Output;
     type Error;
 
+    /// Returns the job type identifier, used for metrics and logging.
+    /// This is a required method that must be implemented for all jobs.
+    /// The job type is used for metrics, logging, and serialization/deserialization.
+    fn job_type(&self) -> &'static str;
+
     async fn execute(&self) -> Result<Self::Output, Self::Error>;
 
     fn should_retry(&self, _error: &Self::Error, _attempt: u32) -> bool {
         true
+    }
+}
+
+/// A wrapper struct for jobs that includes the job type.
+/// This is used for serialization/deserialization to ensure the job type is preserved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobWrapper<J> {
+    /// The job type identifier
+    pub job_type: String,
+    /// The serialized job data
+    pub job_data: J,
+}
+
+impl<J> JobWrapper<J>
+where
+    J: Job + Serialize + for<'de> Deserialize<'de>,
+{
+    /// Create a new JobWrapper from a job
+    pub fn new(job: J) -> Self {
+        Self {
+            job_type: job.job_type().to_string(),
+            job_data: job,
+        }
+    }
+
+    /// Get the job type
+    pub fn job_type(&self) -> &str {
+        &self.job_type
+    }
+
+    /// Get the job data
+    pub fn job_data(&self) -> &J {
+        &self.job_data
+    }
+
+    /// Unwrap the job wrapper and return the job data
+    pub fn into_job_data(self) -> J {
+        self.job_data
     }
 }
 
