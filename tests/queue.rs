@@ -1,8 +1,8 @@
 mod common;
 use common::{TestJob, TestQueue};
 use queue_workers::error;
-use queue_workers::job::Job;
-use queue_workers::queue::Queue;
+use queue_workers::jobs::job::Job;
+use queue_workers::queues::queue::Queue;
 
 #[tokio::test]
 async fn test_job_execution_success() {

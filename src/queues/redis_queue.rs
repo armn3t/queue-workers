@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::{
     error::QueueWorkerError,
-    job::Job,
-    queue::{Queue, QueueType},
+    jobs::job::Job,
+    queues::queue::{Queue, QueueType},
 };
 
 pub struct RedisQueue<J> {

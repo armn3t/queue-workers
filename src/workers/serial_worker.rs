@@ -1,4 +1,4 @@
-use crate::{error::QueueWorkerError, job::Job, queue::Queue};
+use crate::{error::QueueWorkerError, jobs::job::Job, queues::queue::Queue};
 use log;
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};

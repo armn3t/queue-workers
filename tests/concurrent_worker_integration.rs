@@ -1,10 +1,9 @@
 use async_trait::async_trait;
 use queue_workers::{
-    concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig},
     error::QueueWorkerError,
-    job::Job,
-    queue::Queue,
-    redis_queue::RedisQueue,
+    jobs::job::Job,
+    queues::{queue::Queue, redis_queue::RedisQueue},
+    workers::concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::{error, job::Job};
+use crate::{error, jobs::job::Job};
 
 #[derive(Clone, Copy, Debug)]
 pub enum QueueType {

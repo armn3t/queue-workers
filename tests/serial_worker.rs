@@ -3,7 +3,7 @@ use queue_workers::{
     // error::QueueWorkerError,
     // job::Job,
     // queue::Queue,
-    worker::{Worker, WorkerConfig},
+    workers::serial_worker::{Worker, WorkerConfig},
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

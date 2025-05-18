@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use queue_workers::{error::QueueWorkerError, job::Job, queue::Queue};
+use queue_workers::{error::QueueWorkerError, jobs::job::Job, queues::queue::Queue};
 use std::sync::Arc;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

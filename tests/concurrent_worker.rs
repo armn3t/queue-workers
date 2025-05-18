@@ -1,5 +1,5 @@
 // Import Future trait for the ConcurrentWorker::start method
-use queue_workers::concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig};
+use queue_workers::workers::concurrent_worker::{ConcurrentWorker, ConcurrentWorkerConfig};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
@@ -983,7 +983,7 @@ struct ErrorQueue {
 }
 
 #[async_trait::async_trait]
-impl queue_workers::queue::Queue for ErrorQueue {
+impl queue_workers::queues::queue::Queue for ErrorQueue {
     type JobType = TestJob;
 
     async fn push(&self, job: Self::JobType) -> Result<(), queue_workers::error::QueueWorkerError> {

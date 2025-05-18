@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use queue_workers::{
     error::QueueWorkerError,
-    job::Job,
-    queue::{Queue, QueueType},
-    redis_queue::RedisQueue,
+    jobs::job::Job,
+    queues::{
+        queue::{Queue, QueueType},
+        redis_queue::RedisQueue,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
