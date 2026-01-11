@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use redis::{AsyncCommands, Client, aio::MultiplexedConnection};
-use serde::{Serialize, de::DeserializeOwned};
+
 use std::time::Duration;
 
 use crate::{
     error::QueueWorkerError,
-    job::Job,
     queue::{Queue, QueueType},
+    redis_job::{RedisJob, RedisJobWrapper},
 };
 
 pub struct RedisQueue<J> {
@@ -77,14 +77,18 @@ impl<J> Clone for RedisQueue<J> {
 #[async_trait]
 impl<J> Queue for RedisQueue<J>
 where
-    J: Job + Serialize + DeserializeOwned + Send + Sync,
+    J: RedisJob + Send + Sync,
 {
     type JobType = J;
 
     async fn push(&self, job: Self::JobType) -> Result<(), QueueWorkerError> {
         let mut conn = self.get_connection().await?;
 
-        let job_data = serde_json::to_string(&job).map_err(QueueWorkerError::SerializationError)?;
+        // Create a wrapper that includes the job type
+        let wrapper = RedisJobWrapper::new(job);
+
+        // Serialize the wrapper
+        let job_data = serde_json::to_string(&wrapper).map_err(QueueWorkerError::SerializationError)?;
 
         conn.lpush::<&String, String, ()>(&self.queue_name, job_data)
             .await
@@ -111,6 +115,11 @@ where
             QueueWorkerError::JobNotFound(format!("Queue '{}' is empty", self.queue_name))
         })?;
 
-        serde_json::from_str(&job_data).map_err(QueueWorkerError::SerializationError)
+        // Deserialize the wrapper first
+        let wrapper: RedisJobWrapper<J> = serde_json::from_str(&job_data)
+            .map_err(QueueWorkerError::SerializationError)?;
+
+        // Return the job data
+        Ok(wrapper.job_data)
     }
 }

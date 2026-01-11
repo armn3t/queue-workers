@@ -4,7 +4,7 @@ use queue_workers::{
     error::QueueWorkerError,
     job::Job,
     queue::Queue,
-    redis_queue::RedisQueue,
+    simple_queue::SimpleQueue,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -25,6 +25,7 @@ struct EmailJob {
     subject: String,
     attempts: u32,
     should_fail: bool,
+    job_type: String,
     #[serde(skip)]
     completed: Option<Arc<AtomicBool>>,
     #[serde(skip)]
@@ -41,6 +42,7 @@ impl EmailJob {
             subject,
             attempts: 0,
             should_fail,
+            job_type: "EmailJob".to_string(),
             completed: None,
             started: None,
             execution_complete_notifier: None,
@@ -109,12 +111,19 @@ impl Job for EmailJob {
     fn should_retry(&self, _error: &Self::Error, attempt: u32) -> bool {
         attempt < 2 // Retry up to 2 times (3 attempts total)
     }
+
+    // Override the default job_type implementation to use the job_type field
+    fn job_type(&self) -> &'static str {
+        // This is a bit of a hack, but it works for testing
+        // In a real implementation, you would use a static string
+        Box::leak(self.job_type.clone().into_boxed_str())
+    }
 }
 
-async fn setup_redis_queue(queue_name: &str) -> RedisQueue<EmailJob> {
+async fn setup_redis_queue(queue_name: &str) -> SimpleQueue<EmailJob> {
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    RedisQueue::new(&redis_url, queue_name).expect("Failed to create Redis queue")
+    SimpleQueue::new(&redis_url, queue_name).expect("Failed to create Redis queue")
 }
 
 #[tokio::test]
@@ -289,6 +298,56 @@ async fn test_queue_persistence() {
     let retrieved_job = new_queue.pop().await.expect("Failed to pop job");
     assert_eq!(retrieved_job.id, "persistent-email");
     assert_eq!(retrieved_job.subject, "Persistent Test");
+    assert_eq!(retrieved_job.job_type, "EmailJob");
 
     info!("Queue persistence test finished");
+}
+
+#[tokio::test]
+async fn test_custom_job_type() {
+    init_test_logging();
+    info!("Starting custom job type test");
+
+    let queue = setup_redis_queue("concurrent_test_custom_job_type").await;
+
+    // Create a job with a custom type
+    let mut job = EmailJob::new(
+        "custom-type".to_string(),
+        "user@example.com".to_string(),
+        "Custom Type Test".to_string(),
+        false,
+    );
+    job.job_type = "CustomEmailType".to_string();
+
+    queue.push(job).await.expect("Failed to push job");
+
+    // Create a worker to process the job
+    let config = ConcurrentWorkerConfig {
+        max_concurrent_jobs: 1,
+        retry_attempts: 0,
+        retry_delay: Duration::from_millis(10),
+        shutdown_timeout: Duration::from_secs(1),
+    };
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let worker = ConcurrentWorker::new(queue.clone(), config);
+
+    // Spawn a task to wait a reasonable amount of time and then send shutdown signal
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(1)).await;
+        shutdown_tx.send(()).unwrap();
+    });
+
+    worker
+        .start(async move {
+            let _ = shutdown_rx.recv().await;
+        })
+        .await
+        .unwrap();
+
+    // The job should have been processed and the queue should be empty
+    match queue.pop().await {
+        Err(QueueWorkerError::JobNotFound(_)) => (),
+        _ => panic!("Queue should be empty after processing"),
+    }
 }

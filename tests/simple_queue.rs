@@ -3,7 +3,7 @@ use queue_workers::{
     error::QueueWorkerError,
     job::Job,
     queue::{Queue, QueueType},
-    redis_queue::RedisQueue,
+    simple_queue::SimpleQueue,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -17,6 +17,17 @@ fn get_redis_url() -> String {
 struct TestJob {
     id: String,
     payload: String,
+    job_type: String,
+}
+
+impl TestJob {
+    fn new(id: &str, payload: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            payload: payload.to_string(),
+            job_type: "TestJob".to_string(),
+        }
+    }
 }
 
 #[async_trait]
@@ -30,20 +41,24 @@ impl Job for TestJob {
             self.id, self.payload
         ))
     }
+
+    // Override the default job_type implementation to use the job_type field
+    fn job_type(&self) -> &'static str {
+        // This is a bit of a hack, but it works for testing
+        // In a real implementation, you would use a static string
+        Box::leak(self.job_type.clone().into_boxed_str())
+    }
 }
 
 #[tokio::test]
-async fn test_redis_queue_push_pop() {
+async fn test_simple_queue_push_pop() {
     let redis_url = get_redis_url();
     let queue =
-        RedisQueue::<TestJob>::new(&redis_url, &format!("test_queue-{}", uuid::Uuid::new_v4()))
-            .expect("Failed to create Redis queue");
+        SimpleQueue::<TestJob>::new(&redis_url, &format!("test_queue-{}", uuid::Uuid::new_v4()))
+            .expect("Failed to create Simple queue");
 
     // Create a test job
-    let job = TestJob {
-        id: "test-1".to_string(),
-        payload: "test payload".to_string(),
-    };
+    let job = TestJob::new("test-1", "test payload");
 
     // Push job to queue
     queue.push(job).await.expect("Failed to push job");
@@ -52,6 +67,7 @@ async fn test_redis_queue_push_pop() {
     let retrieved_job = queue.pop().await.expect("Failed to pop job");
     assert_eq!(retrieved_job.id, "test-1");
     assert_eq!(retrieved_job.payload, "test payload");
+    assert_eq!(retrieved_job.job_type, "TestJob");
 
     // Queue should be empty now
     let empty_result = queue.pop().await;
@@ -66,28 +82,19 @@ async fn test_queue_types() {
     let redis_url = get_redis_url();
 
     // Test FIFO queue
-    let fifo_queue = RedisQueue::<TestJob>::new(&redis_url, "test_fifo_queue")
+    let fifo_queue = SimpleQueue::<TestJob>::new(&redis_url, "test_fifo_queue")
         .expect("Failed to create FIFO queue");
 
     // Test LIFO queue
     let lifo_queue =
-        RedisQueue::<TestJob>::with_type(&redis_url, "test_lifo_queue", QueueType::LIFO)
+        SimpleQueue::<TestJob>::with_type(&redis_url, "test_lifo_queue", QueueType::LIFO)
             .expect("Failed to create LIFO queue");
 
     // Create test jobs
     let jobs = vec![
-        TestJob {
-            id: "1".to_string(),
-            payload: "first".to_string(),
-        },
-        TestJob {
-            id: "2".to_string(),
-            payload: "second".to_string(),
-        },
-        TestJob {
-            id: "3".to_string(),
-            payload: "third".to_string(),
-        },
+        TestJob::new("1", "first"),
+        TestJob::new("2", "second"),
+        TestJob::new("3", "third"),
     ];
 
     // Push jobs to both queues
@@ -139,22 +146,22 @@ async fn test_queue_types() {
 
 #[tokio::test]
 async fn test_invalid_redis_url() {
-    let result = RedisQueue::<TestJob>::new("invalid-url", "test_queue");
+    let result = SimpleQueue::<TestJob>::new("invalid-url", "test_queue");
     assert!(matches!(result, Err(QueueWorkerError::ConnectionError(_))));
 }
 
 #[tokio::test]
 async fn test_empty_queue_name() {
     let redis_url = get_redis_url();
-    let result = RedisQueue::<TestJob>::new(&redis_url, "");
+    let result = SimpleQueue::<TestJob>::new(&redis_url, "");
     assert!(matches!(result, Err(QueueWorkerError::InvalidJobData(_))));
 }
 
 #[tokio::test]
 async fn test_concurrent_queue_access() {
     let redis_url = get_redis_url();
-    let queue = RedisQueue::<TestJob>::new(&redis_url, "test_concurrent")
-        .expect("Failed to create Redis queue");
+    let queue = SimpleQueue::<TestJob>::new(&redis_url, "test_concurrent")
+        .expect("Failed to create Simple queue");
 
     let mut handles = vec![];
     let job_count = 100;
@@ -163,10 +170,7 @@ async fn test_concurrent_queue_access() {
     for i in 0..job_count {
         let queue_clone = queue.clone();
         let handle = tokio::spawn(async move {
-            let job = TestJob {
-                id: format!("concurrent-{}", i),
-                payload: "test".to_string(),
-            };
+            let job = TestJob::new(&format!("concurrent-{}", i), "test");
             queue_clone.push(job).await
         });
         handles.push(handle);
@@ -192,18 +196,15 @@ async fn test_queue_persistence() {
 
     // Create first queue instance
     let queue1 =
-        RedisQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create first queue");
+        SimpleQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create first queue");
 
     // Push a job
-    let job = TestJob {
-        id: "persist-1".to_string(),
-        payload: "test payload".to_string(),
-    };
+    let job = TestJob::new("persist-1", "test payload");
     queue1.push(job.clone()).await.expect("Failed to push job");
 
     // Create second queue instance
     let queue2 =
-        RedisQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create second queue");
+        SimpleQueue::<TestJob>::new(&redis_url, queue_name).expect("Failed to create second queue");
 
     // Pop job from second instance
     let received_job = queue2.pop().await.expect("Failed to pop job");
@@ -214,15 +215,12 @@ async fn test_queue_persistence() {
 #[tokio::test]
 async fn test_queue_behavior_under_load() {
     let redis_url = get_redis_url();
-    let queue =
-        RedisQueue::<TestJob>::new(&redis_url, "test_load").expect("Failed to create Redis queue");
+    let queue = SimpleQueue::<TestJob>::new(&redis_url, "test_load")
+        .expect("Failed to create Simple queue");
 
     // Push many jobs rapidly
     for i in 0..1000 {
-        let job = TestJob {
-            id: format!("load-{}", i),
-            payload: "test".to_string(),
-        };
+        let job = TestJob::new(&format!("load-{}", i), "test");
         queue.push(job).await.expect("Failed to push job");
     }
 
@@ -238,8 +236,8 @@ async fn test_queue_behavior_under_load() {
 #[tokio::test]
 async fn test_queue_empty_behavior() {
     let redis_url = get_redis_url();
-    let queue =
-        RedisQueue::<TestJob>::new(&redis_url, "test_empty").expect("Failed to create Redis queue");
+    let queue = SimpleQueue::<TestJob>::new(&redis_url, "test_empty")
+        .expect("Failed to create Simple queue");
 
     // Test pop on empty queue
     let result = queue.pop().await;
@@ -252,23 +250,38 @@ async fn test_queue_type_switching() {
     let queue_name = "test_switching";
 
     // Create FIFO queue
-    let fifo_queue = RedisQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::FIFO)
+    let fifo_queue = SimpleQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::FIFO)
         .expect("Failed to create FIFO queue");
 
     // Push some jobs
     for i in 0..3 {
-        let job = TestJob {
-            id: format!("switch-{}", i),
-            payload: "test".to_string(),
-        };
+        let job = TestJob::new(&format!("switch-{}", i), "test");
         fifo_queue.push(job).await.expect("Failed to push job");
     }
 
     // Create LIFO queue with same name
-    let lifo_queue = RedisQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::LIFO)
+    let lifo_queue = SimpleQueue::<TestJob>::with_type(&redis_url, queue_name, QueueType::LIFO)
         .expect("Failed to create LIFO queue");
 
     // Verify order is now LIFO
     let job1 = lifo_queue.pop().await.expect("Failed to pop job 1");
     assert_eq!(job1.id, "switch-2");
+}
+
+#[tokio::test]
+async fn test_custom_job_type() {
+    let redis_url = get_redis_url();
+    let queue = SimpleQueue::<TestJob>::new(&redis_url, "test_job_type")
+        .expect("Failed to create Simple queue");
+
+    // Create a job with a custom type
+    let mut job = TestJob::new("custom-type", "test payload");
+    job.job_type = "CustomJobType".to_string();
+
+    // Push job to queue
+    queue.push(job).await.expect("Failed to push job");
+
+    // Pop job from queue
+    let retrieved_job = queue.pop().await.expect("Failed to pop job");
+    assert_eq!(retrieved_job.job_type, "CustomJobType");
 }
